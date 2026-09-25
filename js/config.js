@@ -9,11 +9,11 @@ var CONFIG = {
   /* 1) URL Web App Apps Script — harus berakhiran /exec
    *    Dapatkan dari: Apps Script → Deploy → New deployment → Web app
    *    (Execute as: Me · Who has access: Anyone)                         */
-  GAS_URL: 'https://script.google.com/macros/s/AKfycbxBwKD5Xd__10qwlr09kC7RDdGeGstIAumt8fnI4KlU6x1PxhR43fmw6QSJJDfGGn2X/exec',
+  GAS_URL: 'https://script.google.com/macros/s/AKfycbyQWfwSJwsEF2QmLtA5IdoDLx6YjwmogFw9O-yWjlIojvIcm3PNNgKrO2J6BKHZchE/exec',
 
   /* 2) API Key — tampil di Execution log saat Anda menjalankan setup()
    *    Contoh: 'ASR-7F3A9C21B4E85D06A1C3F972'                            */
-  API_KEY: 'ASR-DABC76585EA746A19531A783',
+  API_KEY: 'ASR-350E27F8C620430AA97A9892',
 
   /* 3) Google OAuth 2.0 Client ID — untuk tombol "Masuk dengan Google" (staf)
    *    Buat di: console.cloud.google.com → APIs & Services → Credentials →
