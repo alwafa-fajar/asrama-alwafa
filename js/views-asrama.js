@@ -339,8 +339,57 @@ window.VIEWS['penghuni'] = {
     salin: function (teks) {
       try { navigator.clipboard.writeText(teks); toast('Disalin.', 'success'); } catch (e) { toast(teks, 'info'); }
     },
+    /* ---- v6.2: buat & tautkan akun login (data hasil impor/migrasi belum punya akun) ---- */
+    terapkanAkun: function (hasil) {
+      var peta = {};
+      (hasil || []).forEach(function (h) { peta[h.PenghuniID] = h; });
+      this.rows.forEach(function (r) {
+        var h = peta[r.PenghuniID];
+        if (!h) return;
+        r.Akun = Object.assign({}, r.Akun || {}, { UserID: h.UserID, Username: h.Username, SandiAwal: h.SandiAwal,
+                                                   Status: (r.Akun && r.Akun.Status) || 'Aktif', Tertaut: true });
+      });
+    },
+    buatAkun: async function (r) {
+      var pilih = await Swal.fire({
+        title: 'Buat akun login untuk ' + r.NamaLengkap + '?',
+        html: '<div style="text-align:left;font-size:13px">Username = <b>' + (r.NIM || 'awalan email') + '</b>, sandi awal dibuat otomatis. ' +
+              'Bila ternyata sudah ada akun dengan NIM/email yang sama, akun itu yang ditautkan (tidak dibuat ganda).</div>' +
+              '<label style="display:flex;gap:8px;align-items:center;justify-content:center;margin-top:12px;font-size:13px">' +
+              '<input type="checkbox" id="kirimAkunBaru" checked> Kirim info akses via WhatsApp/Email</label>',
+        icon: 'question', showCancelButton: true, confirmButtonText: 'Buat Akun', cancelButtonText: 'Batal', confirmButtonColor: '#2563EB',
+        preConfirm: function () { var el = document.getElementById('kirimAkunBaru'); return { kirim: el ? el.checked : false }; }
+      });
+      if (!pilih.isConfirmed) return;
+      var kirim = !!(pilih.value && pilih.value.kirim === true);
+      var res = await callApi('residents.akunSync', { penghuniIds: [r.PenghuniID], kirim: kirim });
+      if (!res.ok) return;
+      this.terapkanAkun(res.data.hasil);
+      var h = (res.data.hasil || [])[0];
+      this.lihatSandi = Object.assign({}, this.lihatSandi, { [r.PenghuniID]: true });
+      Swal.fire({ icon: 'success', title: h && h.baru ? 'Akun dibuat' : 'Akun ditautkan',
+        html: h ? ('Username: <code>' + h.Username + '</code><br>Sandi: <code>' + (h.SandiAwal || 'sudah diganti mahasiswa — gunakan Reset') + '</code>' +
+                   (res.data.terkirim ? '<br><br><small>📨 Info akses diantrekan (' + res.data.terkirim + ' pesan).</small>' : '')) : res.message,
+        confirmButtonColor: '#2563EB' });
+    },
+    buatSemuaAkun: async function () {
+      var n = this.ringkasan.tanpaAkun || 0, t = this.ringkasan.perluTaut || 0;
+      var ya = await konfirmasi('Buatkan akun login untuk semua mahasiswa aktif?',
+        n + ' mahasiswa belum punya akun akan dibuatkan (username = NIM, sandi awal acak)' +
+        (t ? ' dan ' + t + ' akun lama ditautkan' : '') + '. Info akses dikirim terpisah lewat 📣 Blast Akses Akun.', 'Ya, buatkan');
+      if (!ya) return;
+      this.proses = true;
+      var res = await callApi('residents.akunSync', {}, { timeout: 180000 });
+      this.proses = false;
+      if (!res.ok) return;
+      toast(res.message, 'success');
+      var self = this;
+      APP._paksa = true; try { this.muat(); } finally { APP._paksa = false; }
+      var lanjut = await konfirmasi('Kirim username & sandi sekarang?', res.message + ' Lanjut ke 📣 Blast Akses Akun untuk mengirim username & sandi ke setiap mahasiswa?', 'Buka Blast Akses Akun');
+      if (lanjut) self.blastAkun();
+    },
     resetSandi: async function (r) {
-      if (!r.Akun || !r.Akun.UserID) { toast('Mahasiswa ini belum memiliki akun.', 'warning'); return; }
+      if (!r.Akun || !r.Akun.UserID) { return this.buatAkun(r); }
       var pilih = await Swal.fire({
         title: 'Reset sandi ' + r.NamaLengkap + '?',
         html: '<div style="text-align:left;font-size:13px">Sandi baru dibuat otomatis &amp; semua sesi login lama di perangkat mahasiswa ini berakhir.</div>' +
@@ -403,6 +452,14 @@ window.VIEWS['penghuni'] = {
       </div>
     </div>
 
+    <div class="info-box warn mb-md" v-if="isSA && (ringkasan.tanpaAkun || ringkasan.perluTaut)" style="align-items:center;flex-wrap:wrap">
+      <span>🔐</span>
+      <div class="flex-1"><b>{{ angka(ringkasan.tanpaAkun || 0) }} mahasiswa aktif belum punya akun login</b>
+        <span v-if="ringkasan.perluTaut"> · {{ angka(ringkasan.perluTaut) }} akun belum tertaut</span>
+        <div class="fs-xs">Biasanya data hasil Import/Migrasi. Buatkan akunnya (username = NIM, sandi awal acak), lalu kirim lewat Blast Akses Akun.</div></div>
+      <button class="btn sm" :disabled="proses" @click="buatSemuaAkun"><span v-if="proses" class="spin"></span>🔐 Buatkan &amp; Tautkan Akun</button>
+    </div>
+
     <div class="card">
       <div class="filters">
         <input class="input flex-1" v-model="f.cari" placeholder="🔍 Cari nama, NIM, email, kamar, username… (instan)" style="min-width:240px">
@@ -449,7 +506,7 @@ window.VIEWS['penghuni'] = {
                   </div>
                 </td>
                 <td v-if="isSA" class="akun-sel">
-                  <template v-if="r.Akun && r.Akun.Username">
+                  <template v-if="r.Akun && r.Akun.UserID">
                     <div>👤 <code>{{ r.Akun.Username }}</code>
                       <button class="icon-btn" title="Salin username" @click="salin(r.Akun.Username)">⧉</button></div>
                     <div class="sandi">🔑
@@ -466,7 +523,10 @@ window.VIEWS['penghuni'] = {
                       · <a href="#" @click.prevent="resetSandi(r)">Reset</a>
                     </div>
                   </template>
-                  <span v-else class="badge warn">Belum ada akun</span>
+                  <template v-else>
+                    <span class="badge warn">Belum ada akun</span>
+                    <div class="mt-sm"><button class="btn xs" @click="buatAkun(r)">＋ Buat akun</button></div>
+                  </template>
                 </td>
                 <td class="fs-sm">
                   <template v-if="r.NomorKamar">{{ r.NamaGedung }}<div class="txt-3 fs-xs">Kamar {{ r.NomorKamar }} · Lt {{ r.Lantai }}</div></template>
@@ -536,7 +596,12 @@ window.VIEWS['penghuni'] = {
             <span v-if="proses" class="spin"></span>Simpan Foto</button></div>
         </div>
 
-        <div v-if="isSA && akunDetail" class="info-box mb-md" style="align-items:center">
+        <div v-if="isSA && !(akunDetail && akunDetail.UserID)" class="info-box warn mb-md" style="align-items:center">
+          <span>🔐</span>
+          <div class="flex-1 fs-sm"><b>Belum punya akun login.</b> Mahasiswa ini belum bisa masuk aplikasi (biasanya data hasil impor/migrasi).</div>
+          <button class="btn xs" @click="buatAkun(detail)">＋ Buat Akun Login</button>
+        </div>
+        <div v-if="isSA && akunDetail && akunDetail.UserID" class="info-box mb-md" style="align-items:center">
           <span>🔐</span>
           <div class="flex-1 fs-sm">Akun login · <b>{{ akunDetail.Username }}</b> ·
             sandi: <code>{{ akunDetail.SandiAwal ? (lihatSandi[detail.PenghuniID] ? akunDetail.SandiAwal : '••••••••') : 'sudah diganti mahasiswa' }}</code>

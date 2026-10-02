@@ -92,6 +92,7 @@ window.VIEWS['notifikasi-wa'] = {
     pratinjau: function () {
       var x = this.siapKirim[0] || { nama: 'Ahmad Fauzan', nim: '2026001', kamar: 'A.101', mahasiswa: 'Ahmad Fauzan', santri: 'Ahmad Fauzan', tunggakan: 'Rp 400.000', username: 'ahmad.f', sandi: '••••••' };
       var v = Object.assign({ institusi: CONFIG.NAMA_INSTITUSI, link: APP.pengaturan.APP_URL || location.href.split('#')[0] }, x);
+      if (this.modeAkun) v.sandi = '••••••';                 // sandi asli diisi server saat dikirim
       return String(this.pesan || '').replace(/\{(\w+)\}/g, function (m, k) { return v[k] !== undefined ? v[k] : ''; });
     },
     persenBlast: function () {
@@ -422,7 +423,8 @@ window.VIEWS['notifikasi-wa'] = {
               <input class="input" v-model.trim="aud.tag" placeholder="mis. alumni-2025"></div>
             <div class="field" v-if="aud.sumber === 'akun'"><label class="label">Akun</label>
               <select class="select" v-model="aud.akun"><option value="">Semua mahasiswa</option>
-                <option value="belumLogin">Belum pernah login</option><option value="sandiAwal">Masih memakai sandi awal</option></select></div>
+                <option value="belumLogin">Belum pernah login</option><option value="sandiAwal">Masih memakai sandi awal</option>
+                <option value="tanpaAkun">Belum punya akun (buat dulu di Manajemen Penghuni)</option></select></div>
             <div class="field" v-if="aud.sumber === 'pendaftar'"><label class="label">Status Pendaftar</label>
               <select class="select" v-model="aud.status"><option value="">Semua</option><option>Baru</option>
                 <option>Perlu Revisi</option><option>Diterima</option><option>Ditolak</option></select></div>
