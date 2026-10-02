@@ -181,7 +181,7 @@ window.VIEWS['migrasi'] = {
 
       <div class="card">
         <div class="card-head"><div class="t"><div class="card-title">Rahasia App Lama (opsional)</div>
-          <div class="card-sub">Agar sandi santri &amp; kartu QR yang sudah dicetak tetap berlaku.</div></div></div>
+          <div class="card-sub">Agar sandi mahasiswa &amp; kartu QR yang sudah dicetak tetap berlaku.</div></div></div>
         <div class="field"><label class="label">HASH_SALT app lama
           <span class="wa-badge ya" v-if="scan && scan.rahasiaLama.hashSalt">tersimpan</span></label>
           <input class="input" type="password" v-model.trim="rahasia.hashSalt" autocomplete="off" placeholder="Script Properties → HASH_SALT"></div>
@@ -267,7 +267,7 @@ window.VIEWS['migrasi'] = {
         <div class="card-head"><div class="t"><div class="card-title">4. Checklist Cutover</div></div></div>
         <ol class="fs-sm" style="padding-left:18px;line-height:1.9;margin:0">
           <li>Baca Struktur → <b>Pindai (dry-run)</b> → <b>Jalankan Import</b></li>
-          <li>Cek data penghuni, foto, tagihan, pengaturan. Uji login 1 akun santri.</li>
+          <li>Cek data penghuni, foto, tagihan, pengaturan. Uji login 1 akun mahasiswa.</li>
           <li>Tepat sebelum pindah: <b>Jalankan Import sekali lagi</b> (delta sync).</li>
           <li>Umumkan alamat baru (blast WA). Arsipkan deployment lama — datanya tetap aman.</li>
           <li>Catatan: sesi login lama tidak ikut; semua pengguna cukup login ulang.</li>

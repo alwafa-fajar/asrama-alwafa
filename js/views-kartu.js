@@ -35,7 +35,7 @@ window.VIEWS['scanner'] = {
       this.jamSekarang = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
     },
     muat: async function () {
-      this.memuat = true;
+      this.memuat = !APP._latar;
       var res = await callApi('meal.dashboardKPI', {});
       this.memuat = false;
       if (res.ok) { this.kpi = res.data; this.riwayat = (res.data.riwayat || []).slice(0, 20); }
@@ -147,12 +147,12 @@ window.VIEWS['scanner'] = {
   template: `
   <div>
     <sa-page judul="Scanner QR Code Kartu Makan"
-             sub="Pemindaian kartu asrama makan santri secara real-time di terminal dapur. Satu santri = satu jatah per sesi makan."
+             sub="Pemindaian kartu asrama makan mahasiswa secara real-time di terminal dapur. Satu mahasiswa = satu jatah per sesi makan."
              :jalur="['Modul Kartu &amp; Makan','Scanner QR']">
       <template #aksi>
         <span class="badge ok">● Live Kitchen Sync</span>
         <button class="btn secondary" @click="beep = !beep">{{ beep ? '🔊 Beeper Aktif' : '🔇 Beeper Mati' }}</button>
-        <button class="btn secondary" @click="muat">↻ Sinkron Ulang</button>
+        <button class="btn secondary" @click="segarkan(muat)">↻ Sinkron Ulang</button>
       </template>
     </sa-page>
 
@@ -170,7 +170,7 @@ window.VIEWS['scanner'] = {
         </div>
         <div class="hero-actions">
           <div class="text-center">
-            <div class="fs-xs" style="color:#93AECF">SANTRI SUDAH TAP SESI INI</div>
+            <div class="fs-xs" style="color:#93AECF">MAHASISWA SUDAH TAP SESI INI</div>
             <div style="font-size:28px;font-weight:700" class="num">{{ kpi.sudahTapSesiIni }} / {{ kpi.santriBerhak }}</div>
           </div>
         </div>
@@ -182,7 +182,7 @@ window.VIEWS['scanner'] = {
           <div class="card">
             <div class="card-head">
               <div class="t"><div class="card-title">📷 Optical Lens Viewport</div>
-                <div class="card-sub">Auto-detect QR Code · arahkan kamera ke kartu santri</div></div>
+                <div class="card-sub">Auto-detect QR Code · arahkan kamera ke kartu mahasiswa</div></div>
               <select class="select" v-model="perangkatId" @change="gantiKamera" style="width:auto;min-width:180px" v-if="perangkat.length > 1">
                 <option v-for="p in perangkat" :key="p.deviceId" :value="p.deviceId">{{ p.label || 'Kamera' }}</option>
               </select>
@@ -295,7 +295,7 @@ window.VIEWS['scanner'] = {
                 </span>
               </div>
               <sa-empty v-if="!riwayat.length" judul="Belum ada pemindaian"
-                        pesan="Log akan muncul setelah santri pertama melakukan tap." ikon="⬚"></sa-empty>
+                        pesan="Log akan muncul setelah mahasiswa pertama melakukan tap." ikon="⬚"></sa-empty>
             </div>
           </div>
         </div>
@@ -311,11 +311,12 @@ window.VIEWS['kelola-kartu'] = {
   props: ['user'],
   data: function () {
     return { rows: [], memuat: true, ref: null, f: { angkatan: '', paketId: '', hanyaEligible: false },
-             cari: '', pratinjau: null, prosesZip: false, progres: 0, totalZip: 0 };
+             cari: '', pratinjau: null, prosesZip: false, progres: 0, totalZip: 0, fotoBaru: null, prosesFoto: false };
   },
-  mounted: async function () {
-    var r = await callCached('meta.ref', {});
-    if (r.ok) this.ref = r.data;
+  mounted: function () {
+    var self = this;
+    // v6.2: referensi & data dimuat PARALEL (digabung jadi 1 batch)
+    callCached('meta.ref', {}).then(function (r) { if (r.ok) self.ref = r.data; });
     this.muat();
   },
   computed: {
@@ -335,7 +336,7 @@ window.VIEWS['kelola-kartu'] = {
   },
   methods: {
     muat: async function () {
-      this.memuat = true;
+      this.memuat = !APP._latar;
       var res = await callApi('card.list', this.f);
       this.memuat = false;
       if (res.ok) this.rows = res.data;
@@ -350,26 +351,43 @@ window.VIEWS['kelola-kartu'] = {
       this.muat();
     },
     lihat: async function (r) {
+      this.fotoBaru = null;
       var res = await callApi('card.generate', { penghuniId: r.PenghuniID });
       if (res.ok) this.pratinjau = res.data;
     },
+    simpanFotoKartu: async function () {
+      if (!this.fotoBaru || !this.pratinjau) return;
+      this.prosesFoto = true;
+      var id = this.pratinjau.PenghuniID;
+      var res = await callApi('residents.uploadFoto', { penghuniId: id, foto: this.fotoBaru });
+      this.prosesFoto = false;
+      if (res.ok) {
+        this.rows.forEach(function (r) { if (r.PenghuniID === id) { r.AdaFoto = true; r.FotoURL = res.data.FotoURL; } });
+        this.fotoBaru = null;
+        var g = await callApi('card.generate', { penghuniId: id });
+        if (g.ok) this.pratinjau = g.data;
+        toast('Foto tersimpan — kartu siap dicetak.', 'success');
+      }
+    },
     unduhPdf: async function (data) {
+      if (!data.AdaFoto) { toast('Kartu makan wajib berfoto. Unggah foto profil terlebih dahulu.', 'warning'); return; }
       var doc = await buatPdfKartu(data);
       doc.save('KartuMakan_' + (data.NIM || data.PenghuniID) + '_' + data.NamaLengkap.replace(/\s+/g, '_') + '.pdf');
       toast('Kartu PDF diunduh.', 'success');
     },
     eksporZip: async function () {
       var ya = await konfirmasi('Ekspor semua kartu ke ZIP?',
-        'Kartu dibuat per batch 10 santri. Jangan tutup halaman sampai proses selesai.', 'Ya, mulai');
+        'Kartu dibuat per batch 10 mahasiswa. Jangan tutup halaman sampai proses selesai.', 'Ya, mulai');
       if (!ya) return;
       this.prosesZip = true; this.progres = 0;
       try { await Promise.all([pustaka('jszip'), pustaka('jspdf')]); } catch (e) { toast(e.message, 'error'); this.prosesZip = false; return; }
-      var zip = new JSZip(), offset = 0, selesai = false, total = 0;
+      var zip = new JSZip(), offset = 0, selesai = false, total = 0, tanpaFoto = [];
       try {
         while (!selesai) {
           var res = await callApi('card.bulkExport',
             { angkatan: this.f.angkatan, paketId: this.f.paketId, offset: offset, limit: CONFIG.BULK_CARD_BATCH });
           if (!res.ok) break;
+          if (offset === 0 && res.data.jumlahTanpaFoto) tanpaFoto = res.data.tanpaFoto;
           total = res.data.total; this.totalZip = total;
           for (var i = 0; i < res.data.batch.length; i++) {
             var k = res.data.batch[i];
@@ -389,7 +407,14 @@ window.VIEWS['kelola-kartu'] = {
           a.href = url; a.download = 'KartuAsramaMakan_' + new Date().toISOString().substring(0, 10) + '.zip';
           a.click(); URL.revokeObjectURL(url);
           toast(this.progres + ' kartu diekspor ke ZIP.', 'success');
-        } else { toast('Tidak ada kartu yang memenuhi filter.', 'warning'); }
+        } else { toast('Tidak ada kartu (berfoto) yang memenuhi filter.', 'warning'); }
+        if (tanpaFoto.length) {
+          Swal.fire({ icon: 'warning', title: tanpaFoto.length + ' kartu dilewati — belum berfoto',
+            html: '<div style="text-align:left;max-height:220px;overflow:auto;font-size:13px">' +
+                  tanpaFoto.map(function (x) { return '• ' + x.NamaLengkap + ' <small>(' + (x.NIM || x.PenghuniID) + ')</small>'; }).join('<br>') +
+                  '</div><p style="font-size:12px;margin-top:10px">Unggah foto lewat tombol <b>Pratinjau</b> di daftar ini atau menu Manajemen Penghuni.</p>',
+            confirmButtonColor: '#2563EB' });
+        }
       } catch (e) {
         toast('Ekspor gagal: ' + e.message, 'error');
       }
@@ -402,7 +427,7 @@ window.VIEWS['kelola-kartu'] = {
              sub="Persetujuan hak kartu, pratinjau desain, cetak individu, dan ekspor massal PDF dalam satu berkas ZIP."
              :jalur="['Modul Kartu &amp; Makan','Kelola Kartu']">
       <template #aksi>
-        <button class="btn secondary" @click="muat">↻ Segarkan</button>
+        <button class="btn secondary" @click="segarkan(muat)">↻ Segarkan</button>
         <button class="btn dark" :disabled="prosesZip" @click="eksporZip">
           <span v-if="prosesZip" class="spin"></span>
           {{ prosesZip ? ('Memproses ' + progres + '/' + totalZip + '…') : '📦 Ekspor ZIP Semua Kartu' }}
@@ -411,7 +436,7 @@ window.VIEWS['kelola-kartu'] = {
     </sa-page>
 
     <div class="grid grid-3 mb-md">
-      <sa-kpi label="Santri Terdaftar" :nilai="angka(statistik.total)" ikon="👥"></sa-kpi>
+      <sa-kpi label="Mahasiswa Terdaftar" :nilai="angka(statistik.total)" ikon="👥"></sa-kpi>
       <sa-kpi label="Kartu QR Aktif" :nilai="angka(statistik.eligible)" ikon="⬚" warna="ok"
               catatan="Berhak jatah katering 3x/hari"></sa-kpi>
       <sa-kpi label="Menunggu Persetujuan" :nilai="statistik.belum" ikon="⏳" warna="warn"
@@ -439,13 +464,14 @@ window.VIEWS['kelola-kartu'] = {
       <sa-loading v-if="memuat"></sa-loading>
       <div class="table-wrap" v-else-if="tampil.length">
         <table class="tbl">
-          <thead><tr><th>Mahasantri</th><th>Kamar</th><th>Paket</th><th>Nilai QR</th><th>Status Kartu</th><th>Tindakan</th></tr></thead>
+          <thead><tr><th>Mahasiswa</th><th>Kamar</th><th>Paket</th><th>Nilai QR</th><th>Status Kartu</th><th>Tindakan</th></tr></thead>
           <tbody>
             <tr v-for="r in tampil.slice(0,100)" :key="r.PenghuniID">
               <td>
                 <div class="person">
-                  <sa-avatar :nama="r.NamaLengkap" :foto="r.FotoURL" ukuran="sm"></sa-avatar>
-                  <div class="nm"><b>{{ r.NamaLengkap }}</b><span class="mono">{{ r.NIM }} · {{ r.Prodi }}</span></div>
+                  <span :class="{'tanpa-foto': !r.AdaFoto}"><sa-avatar :nama="r.NamaLengkap" :foto="r.FotoURL" ukuran="sm"></sa-avatar></span>
+                  <div class="nm"><b>{{ r.NamaLengkap }}</b><span class="mono">{{ r.NIM }} · {{ r.Prodi }}</span>
+                    <span v-if="!r.AdaFoto" class="fs-xs" style="color:#B45309">📷 belum berfoto — kartu belum bisa dicetak</span></div>
                 </div>
               </td>
               <td class="fs-sm">{{ r.NomorKamar }}</td>
@@ -468,15 +494,21 @@ window.VIEWS['kelola-kartu'] = {
           </tbody>
         </table>
       </div>
-      <sa-empty v-else judul="Belum ada santri" pesan="Tidak ada data pada filter ini."></sa-empty>
+      <sa-empty v-else judul="Belum ada mahasiswa" pesan="Tidak ada data pada filter ini."></sa-empty>
     </div>
 
     <sa-modal v-if="pratinjau" judul="Pratinjau Kartu Asrama Makan"
               :sub="pratinjau.NamaLengkap + ' · ' + pratinjau.PenghuniID" ikon="⬚" @tutup="pratinjau = null">
+      <div v-if="!pratinjau.AdaFoto" class="info-box warn mb-md" style="display:block">
+        <div class="mb-sm"><b>📷 Belum ada foto profil.</b> Kartu makan wajib berfoto — unggah foto agar PDF bisa dicetak.</div>
+        <sa-foto-upload v-model="fotoBaru" :nama="pratinjau.NamaLengkap"></sa-foto-upload>
+        <div class="text-right mt-sm"><button class="btn sm" :disabled="!fotoBaru || prosesFoto" @click="simpanFotoKartu">
+          <span v-if="prosesFoto" class="spin"></span>Simpan Foto</button></div>
+      </div>
       <div class="idcard" style="margin:0 auto">
         <div class="idcard-head">
           <div style="width:22px;height:22px;border-radius:5px;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center">🏛</div>
-          <div><small>{{ pratinjau.institusi }}</small><b>KARTU KONSUMSI MAHASANTRI</b></div>
+          <div><small>{{ pratinjau.institusi }}</small><b>KARTU KONSUMSI MAHASISWA</b></div>
           <span style="margin-left:auto;font-size:9px;background:rgba(255,255,255,.18);padding:2px 7px;border-radius:999px">
             {{ pratinjau.tahunAkademik }}</span>
         </div>
@@ -503,10 +535,10 @@ window.VIEWS['kelola-kartu'] = {
         </div>
       </div>
       <div class="info-box mt-md"><span>🔐</span><div>Nilai QR dibentuk dari <b>SIM-{PenghuniID}-HMAC</b> dan diverifikasi
-        di server saat pemindaian. Kartu otomatis tidak berlaku setelah santri checkout (BR-24).</div></div>
+        di server saat pemindaian. Kartu otomatis tidak berlaku setelah mahasiswa checkout (BR-24).</div></div>
       <template #aksi>
         <button class="btn secondary" @click="pratinjau = null">Tutup</button>
-        <button class="btn" @click="unduhPdf(pratinjau)">⬇ Unduh Kartu PDF (HD)</button>
+        <button class="btn" @click="unduhPdf(pratinjau)" :disabled="!pratinjau.AdaFoto">⬇ Unduh Kartu PDF (HD)</button>
       </template>
     </sa-modal>
   </div>`
@@ -517,7 +549,7 @@ window.VIEWS['kelola-kartu'] = {
  * ======================================================================= */
 window.VIEWS['kartu-saya'] = {
   props: ['user'],
-  data: function () { return { kartu: null, riwayat: null, memuat: true, bulan: '' }; },
+  data: function () { return { kartu: null, riwayat: null, memuat: true, bulan: '', fotoBaru: null, proses: false }; },
   mounted: function () {
     var d = new Date();
     this.bulan = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
@@ -525,17 +557,25 @@ window.VIEWS['kartu-saya'] = {
   },
   methods: {
     muat: async function () {
-      this.memuat = true;
-      var a = await callApi('card.generate', {}, { diam: true });
-      var b = await callApi('meal.myHistory', { bulan: this.bulan });
+      this.memuat = !APP._latar;
+      var hasil = await Promise.all([callApi('card.generate', {}, { diam: true }), callApi('meal.myHistory', { bulan: this.bulan })]);
+      var a = hasil[0], b = hasil[1];
       this.memuat = false;
       if (a.ok) this.kartu = a.data;
       if (b.ok) this.riwayat = b.data;
     },
     unduh: async function () {
+      if (!this.kartu.AdaFoto) { toast('Unggah foto profil terlebih dahulu — kartu makan wajib berfoto.', 'warning'); return; }
       var doc = await buatPdfKartu(this.kartu);
       doc.save('KartuMakan_' + (this.kartu.NIM || this.kartu.PenghuniID) + '.pdf');
       toast('Kartu berhasil diunduh.', 'success');
+    },
+    simpanFoto: async function () {
+      if (!this.fotoBaru) return;
+      this.proses = true;
+      var res = await callApi('residents.uploadFoto', { foto: this.fotoBaru });
+      this.proses = false;
+      if (res.ok) { this.fotoBaru = null; toast('Foto profil tersimpan. Kartu siap diunduh.', 'success'); this.muat(); }
     },
     qrPenuh: function () {
       Swal.fire({
@@ -548,13 +588,13 @@ window.VIEWS['kartu-saya'] = {
   template: `
   <div>
     <sa-page judul="Kartu Asrama Makan &amp; Riwayat Konsumsi"
-             sub="Identitas digital resmi hak konsumsi makanan mahasantri. Tunjukkan QR kepada petugas dapur."
+             sub="Identitas digital resmi hak konsumsi makanan mahasiswa. Tunjukkan QR kepada petugas dapur."
              :jalur="['Layanan Mandiri','Kartu Makan Saya']"></sa-page>
 
     <sa-loading v-if="memuat"></sa-loading>
 
     <div class="info-box warn" v-else-if="!kartu">
-      <span>ℹ️</span><div><b>Anda belum memiliki kartu makan.</b> Kartu hanya diterbitkan untuk santri dengan paket
+      <span>ℹ️</span><div><b>Anda belum memiliki kartu makan.</b> Kartu hanya diterbitkan untuk mahasiswa dengan paket
       termasuk katering dan telah disetujui admin asrama.</div>
     </div>
 
@@ -562,15 +602,23 @@ window.VIEWS['kartu-saya'] = {
       <div class="grid grid-23">
         <div class="card">
           <div class="card-head">
-            <div class="t"><div class="card-title">Kartu Konsumsi Mahasantri</div>
+            <div class="t"><div class="card-title">Kartu Konsumsi Mahasiswa</div>
               <div class="card-sub">Standar ISO/IEC 7810 ID-1 · CR80 (85,6 × 54 mm)</div></div>
-            <span class="badge ok">Kartu Aktif &amp; Terverifikasi</span>
+            <span class="badge" :class="kartu.AdaFoto ? 'ok' : 'warn'">{{ kartu.AdaFoto ? 'Kartu Aktif &amp; Terverifikasi' : 'Perlu foto profil' }}</span>
+          </div>
+
+          <div v-if="!kartu.AdaFoto" class="info-box warn mb-md" style="display:block">
+            <div class="mb-sm"><b>📷 Foto profil wajib diunggah.</b> Kartu makan (PDF) baru bisa diunduh setelah Anda mengunggah foto.
+              QR di bawah tetap bisa dipindai petugas sementara ini.</div>
+            <sa-foto-upload v-model="fotoBaru" :nama="kartu.NamaLengkap"></sa-foto-upload>
+            <div class="text-right mt-sm"><button class="btn sm" :disabled="!fotoBaru || proses" @click="simpanFoto">
+              <span v-if="proses" class="spin"></span>Simpan Foto Profil</button></div>
           </div>
 
           <div class="idcard" style="margin:0 auto">
             <div class="idcard-head">
               <div style="width:22px;height:22px;border-radius:5px;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center">🏛</div>
-              <div><small>{{ kartu.institusi }}</small><b>KARTU KONSUMSI MAHASANTRI</b></div>
+              <div><small>{{ kartu.institusi }}</small><b>KARTU KONSUMSI MAHASISWA</b></div>
               <span style="margin-left:auto;font-size:9px;background:rgba(255,255,255,.18);padding:2px 7px;border-radius:999px">
                 {{ kartu.tahunAkademik }}</span>
             </div>
@@ -598,7 +646,7 @@ window.VIEWS['kartu-saya'] = {
           </div>
 
           <div class="btn-row mt-lg" style="justify-content:center">
-            <button class="btn dark" @click="unduh">⬇ Unduh Kartu Digital (PDF HD)</button>
+            <button class="btn dark" @click="unduh" :disabled="!kartu.AdaFoto" :title="kartu.AdaFoto ? '' : 'Unggah foto profil terlebih dahulu'">⬇ Unduh Kartu Digital (PDF HD)</button>
             <button class="btn secondary" @click="qrPenuh">⬚ Tampilkan QR Layar Penuh</button>
           </div>
         </div>
@@ -632,7 +680,7 @@ window.VIEWS['kartu-saya'] = {
 
       <div class="card" v-if="riwayat">
         <div class="card-head">
-          <div class="t"><div class="card-title">Riwayat Presensi Konsumsi Santri</div>
+          <div class="t"><div class="card-title">Riwayat Presensi Konsumsi Mahasiswa</div>
             <div class="card-sub">Rekam jejak pengambilan jatah makanan harian di Dapur Pusat</div></div>
           <input class="input" type="month" v-model="bulan" @change="muat" style="width:auto">
           <button class="btn sm secondary" @click="unduhExcel(riwayat.rows,'RiwayatMakan_' + bulan,'Konsumsi')">⬇ Unduh Rekap</button>
@@ -672,9 +720,9 @@ window.VIEWS['log-makan'] = {
   },
   methods: {
     muat: async function () {
-      this.memuat = true;
-      var a = await callApi('meal.dashboardKPI', {});
-      var b = await callApi('meal.list', Object.assign({ bulan: this.bulan }, this.f));
+      this.memuat = !APP._latar;
+      var hasil = await Promise.all([callApi('meal.dashboardKPI', {}), callApi('meal.list', Object.assign({ bulan: this.bulan }, this.f))]);
+      var a = hasil[0], b = hasil[1];
       this.memuat = false;
       if (a.ok) this.d = a.data;
       if (b.ok) this.log = b.data.rows;
@@ -685,7 +733,7 @@ window.VIEWS['log-makan'] = {
   },
   template: `
   <div>
-    <sa-page judul="Laporan Presensi &amp; Konsumsi Makan Santri"
+    <sa-page judul="Laporan Presensi &amp; Konsumsi Makan Mahasiswa"
              sub="Audit analitik distribusi katering harian 3x makan, serapan kuota, dan performa terminal pemindai dapur."
              :jalur="['Laporan &amp; Analitika','Presensi &amp; Konsumsi Makan']">
       <template #aksi>
@@ -699,7 +747,7 @@ window.VIEWS['log-makan'] = {
       <div class="grid grid-4 mb-md">
         <sa-kpi label="Total Porsi Terdistribusi" :nilai="angka(d.totalBulanIni)" satuan="porsi" ikon="🍽"
                 :catatan="'Bulan ' + periodeLabel(bulan)"></sa-kpi>
-        <sa-kpi label="Santri Berhak Makan" :nilai="angka(d.santriBerhak)" satuan="santri" ikon="👥" warna="ok"
+        <sa-kpi label="Mahasiswa Berhak Makan" :nilai="angka(d.santriBerhak)" satuan="mahasiswa" ikon="👥" warna="ok"
                 catatan="Paket katering aktif &amp; terverifikasi"></sa-kpi>
         <sa-kpi label="Konsumsi Hari Ini" :nilai="angka(d.totalHariIni)" satuan="porsi" ikon="📅"
                 :catatan="'Pagi ' + d.pagi + ' · Siang ' + d.siang + ' · Malam ' + d.malam"></sa-kpi>
@@ -745,7 +793,7 @@ window.VIEWS['log-makan'] = {
         </div>
         <div class="table-wrap" v-if="log.length">
           <table class="tbl">
-            <thead><tr><th>Waktu</th><th>Santri</th><th>Sesi</th><th>Status</th><th>Petugas</th></tr></thead>
+            <thead><tr><th>Waktu</th><th>Mahasiswa</th><th>Sesi</th><th>Status</th><th>Petugas</th></tr></thead>
             <tbody>
               <tr v-for="l in log.slice(0,200)" :key="l.LogID">
                 <td class="mono fs-xs">{{ tanggal(l.Timestamp,'jam') }}</td>

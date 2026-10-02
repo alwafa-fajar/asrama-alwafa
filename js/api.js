@@ -1,13 +1,17 @@
 /* ==========================================================================
- * SIM ASRAMA v6.1 — LAPISAN API & UTILITAS
+ * SIM ASRAMA v6.2 — LAPISAN API & UTILITAS
  * --------------------------------------------------------------------------
  * • callApi()  : satu pintu ke backend GAS (fetch POST, text/plain)
- * • Cache      : window.APP.cache — hasil baca disimpan sementara di browser
+ * • v6.2 TURBO (gas-scale-turbo + gas-instant-ux-pro):
+ *     - Cache baca persisten (memori + localStorage) → pindah menu 0 ms
+ *     - Stale-while-revalidate: data lama tampil SEKETIKA, data baru menyusul
+ *       di latar & tampilan disegarkan otomatis bila berubah
+ *     - Gabung otomatis (batch) beberapa permintaan baca → 1 eksekusi GAS
+ *     - Batas waktu + coba ulang otomatis (3×) saat Google sibuk / jaringan putus
+ *     - reqId pada aksi tulis → aman diulang, tidak ada data ganda
+ *     - Prefetch menu utama di waktu senggang · Perf.table() di console
  * • Optimistic : optimistic() — UI berubah 0 ms, rollback otomatis bila gagal
  * • Util       : format rupiah/tanggal, QR code, PDF kartu, ekspor .xlsx
- * • v6.1       : sesi persisten (localStorage), pustaka berat dimuat saat
- *                dibutuhkan (lazy), kompres gambar + thumbnail di browser,
- *                pemanasan (warm-up) server GAS saat halaman dibuka
  * ========================================================================== */
 
 var APP = {
@@ -15,29 +19,223 @@ var APP = {
   user: null,
   ref: null,
   cache: {},
-  pengaturan: {}
+  pengaturan: {},
+  _latar: false,      // true saat tampilan disegarkan di latar (tanpa skeleton)
+  _paksa: false       // true saat pengguna menekan "Segarkan" (abaikan cache)
 };
 
 /* -------------------------------------------------------------------------
  * 1. PEMANGGILAN API
  * ---------------------------------------------------------------------- */
 
+/** Rute BACA yang boleh di-cache di browser (cermin Turbo.gs) */
+var TURBO_BACA = {};
+('dashboard.admin dashboard.resident registration.list registration.mine residents.list residents.profile ' +
+ 'crud.list rooms.board rooms.list rooms.occupants billing.list billing.mine billing.eligible billing.pending ' +
+ 'helpdesk.list helpdesk.mine discipline.list discipline.mine discipline.history discipline.rekap archive.list ' +
+ 'reports.catalog reports.preview reports.executive settings.list users.list master.list master.listAll meta.ref ' +
+ 'card.list card.generate meal.list meal.dashboardKPI meal.myHistory import.history backup.list migrasi.history ' +
+ 'crm.list crm.stats crm.detail reminder.preview doc.templates doc.list branding.get')
+  .split(' ').forEach(function (a) { TURBO_BACA[a] = 1; });
+
+/** Rute baca yang TIDAK di-cache di browser tetapi aman diulang */
+var BACA_LAIN = {};
+('notify.list audit.list notif.queue notif.config wa.blastList wa.audience auth.config reminder.status ' +
+ 'crm.duplikat doc.pdf registration.status doc.verify export.pendaftaran export.penghuni export.penempatan ' +
+ 'export.tagihan export.teguran export.helpdesk crm.export meal.export card.bulkExport import.template import.preview')
+  .split(' ').forEach(function (a) { BACA_LAIN[a] = 1; });
+
+/** Aksi non-baca yang TIDAK mengubah data → tidak membuat cache browser basi */
+var TANPA_EPOCH = {};
+('auth.login auth.google auth.logout app.boot notify.markRead notify.markAllRead wa.device wa.test email.test ' +
+ 'wa.validate notif.processNow wa.blastProcess migrasi.scan doc.templateScan')
+  .split(' ').forEach(function (a) { TANPA_EPOCH[a] = 1; });
+
+/** Tidak disimpan ke localStorage (besar / berisi berkas) — cukup di memori */
+var TANPA_PERSIST = { 'card.generate': 1, 'doc.templates': 0 };
+
+var TURBO = {
+  segarMs: function () { return CONFIG.TURBO_SEGAR_MS || 30000; },   // data dianggap segar 30 dtk
+  epoch: 0,              // naik setiap aksi tulis sukses → semua cache jadi "basi"
+  terakhirTulis: 0,
+  mem: {},               // kunci → { t, e, res }
+  terbang: {},           // permintaan identik yang sedang berjalan (dedupe)
+  kunciView: {},         // kunci yang dibaca tampilan aktif (untuk segar otomatis)
+  pernahJson: false
+};
+
+function kunciCache(action, payload) {
+  return (APP.user ? APP.user.UserID : 'pub') + '|' + action + '|' + JSON.stringify(payload || {});
+}
+
+function ambilCache(k) {
+  if (TURBO.mem[k]) return TURBO.mem[k];
+  try {
+    var raw = localStorage.getItem('asr_c:' + k);
+    if (raw) { var o = JSON.parse(raw); o.e = -1; TURBO.mem[k] = o; return o; }   // dari sesi lalu → basi
+  } catch (e) {}
+  return null;
+}
+
+function simpanCache(k, action, res) {
+  var o = { t: Date.now(), e: TURBO.epoch, res: res };
+  TURBO.mem[k] = o;
+  if (TANPA_PERSIST[action]) return;
+  try {
+    // Sandi awal tidak pernah disimpan permanen di perangkat (hanya di memori tab ini)
+    var str = JSON.stringify({ t: o.t, res: res }, function (key, v) { return key === 'SandiAwal' ? undefined : v; });
+    if (str.length > 1500000) return;
+    try { localStorage.setItem('asr_c:' + k, str); }
+    catch (e) { bersihkanCachePersist(); localStorage.setItem('asr_c:' + k, str); }
+  } catch (e) {}
+}
+
+function bersihkanCachePersist() {
+  try { Object.keys(localStorage).forEach(function (x) { if (x.indexOf('asr_c:') === 0 || x.indexOf('asr_swr_') === 0) localStorage.removeItem(x); }); } catch (e) {}
+}
+
 /**
  * @param {string} action  nama route, mis. 'residents.list'
  * @param {object} payload data yang dikirim
- * @param {object} opt     { diam:true } → tidak menampilkan notifikasi error
+ * @param {object} opt     { diam:true } tanpa toast error · { segar:true } abaikan cache ·
+ *                         { timeout:ms } · { coba:n } jumlah percobaan
  * @returns {Promise<{ok:boolean,data:*,error:string}>}
  */
-async function callApi(action, payload, opt) {
+function callApi(action, payload, opt) {
   opt = opt || {};
-  var body = {
-    action: action,
-    apiKey: CONFIG.API_KEY,
-    token: APP.token || '',
-    payload: payload || {}
-  };
+  payload = payload || {};
+  if (TURBO_BACA[action] && !opt.tanpaCache) return bacaTurbo(action, payload, opt);
+  return kirimApi(action, payload, opt);
+}
+
+function bacaTurbo(action, payload, opt) {
+  var k = kunciCache(action, payload);
+  TURBO.kunciView[k] = 1;
+  var segar = opt.segar || APP._paksa;
+  var c = segar ? null : ambilCache(k);
+  if (c) {
+    var umur = Date.now() - c.t;
+    if (c.e === TURBO.epoch && umur < TURBO.segarMs()) { Perf.catat(action, 0, 0, 'browser'); return Promise.resolve(c.res); }
+    // Baru saja menyimpan sesuatu → tampilan yang memuat ulang ingin data terbaru, bukan data lama
+    var habisTulis = c.t < TURBO.terakhirTulis && Date.now() - TURBO.terakhirTulis < 8000;
+    if (!habisTulis) {
+      revalidasi(action, payload, k, c);
+      Perf.catat(action, 0, 0, 'basi');
+      return Promise.resolve(c.res);
+    }
+  }
+  return ambilJaringan(action, payload, k, Object.assign({}, opt, { segar: segar }));
+}
+
+function ambilJaringan(action, payload, k, opt) {
+  if (TURBO.terbang[k]) return TURBO.terbang[k];
+  var kirimPayload = opt.segar ? Object.assign({}, payload, { _segar: 1 }) : payload;
+  var p = antreBaca(action, kirimPayload, opt).then(function (res) {
+    delete TURBO.terbang[k];
+    if (res && res.ok) simpanCache(k, action, res);
+    return res;
+  });
+  TURBO.terbang[k] = p;
+  return p;
+}
+
+function revalidasi(action, payload, k, lama) {
+  if (TURBO.terbang[k]) return;
+  ambilJaringan(action, payload, k, { diam: true }).then(function (res) {
+    if (res && res.ok && JSON.stringify(res.data) !== JSON.stringify(lama.res.data) && TURBO.kunciView[k]) jadwalSegarkanView();
+  });
+}
+
+var _tSegarView = null;
+function jadwalSegarkanView() {
+  clearTimeout(_tSegarView);
+  _tSegarView = setTimeout(function () { if (window.__app && window.__app.segarkanView) window.__app.segarkanView(); }, 60);
+}
+
+/** Dipanggil saat pindah menu */
+function turboPindahRute() { TURBO.kunciView = {}; }
+
+/* ---- Gabung otomatis (batch) permintaan baca yang muncul bersamaan ---- */
+var _antreBaca = [], _tBaca = null;
+function antreBaca(action, payload, opt) {
+  if (!APP.token || opt.sendiri) return kirimApi(action, payload, opt);
+  return new Promise(function (resolve) {
+    _antreBaca.push({ action: action, payload: payload, opt: opt, resolve: resolve });
+    if (!_tBaca) _tBaca = setTimeout(kirimAntreBaca, 12);
+  });
+}
+
+function kirimAntreBaca() {
+  _tBaca = null;
+  var semua = _antreBaca.splice(0);
+  while (semua.length) {
+    var grup = semua.splice(0, 10);
+    if (grup.length === 1) {
+      var g = grup[0];
+      kirimApi(g.action, g.payload, g.opt).then(g.resolve);
+      continue;
+    }
+    (function (grup) {
+      var t0 = performance.now();
+      kirimApi('batch', { calls: grup.map(function (x) { return { action: x.action, payload: x.payload }; }) }, { diam: true })
+        .then(function (res) {
+          var ms = Math.round(performance.now() - t0);
+          grup.forEach(function (x, i) {
+            var r = res && res.ok && res.data ? res.data[i] : null;
+            if (!r) r = { ok: false, error: (res && res.error) || 'Gagal memuat.', code: res && res.code };
+            if (!r.ok && !x.opt.diam && r.code !== 401) toast(r.error || 'Permintaan gagal.', 'error');
+            Perf.catat(x.action, ms, res && res.ms, r.cached ? 'server-cache' : 'batch');
+            x.resolve(r);
+          });
+        });
+    })(grup);
+  }
+}
+
+/* ---- Pengiriman jaringan: batas waktu + coba ulang + reqId ---- */
+function buatReqId() {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 6);
+}
+
+function tidur(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+async function kirimApi(action, payload, opt) {
+  opt = opt || {};
+  var baca = TURBO_BACA[action] || BACA_LAIN[action] || action === 'batch';
+  var body = { action: action, apiKey: CONFIG.API_KEY, token: APP.token || '', payload: payload || {} };
+  if (!baca) body.reqId = opt.reqId || buatReqId();          // tulis: aman diulang (server idempoten)
+  var maks = opt.coba || 3;
+  var t0 = performance.now(), terakhir = null;
+  for (var i = 0; i < maks; i++) {
+    var r = await fetchSekali(body, opt.timeout || (baca ? 30000 : 75000));
+    if (!r._transien) { terakhir = r; break; }
+    terakhir = r;
+    if (i < maks - 1) await tidur(i === 0 ? 800 : 2200);
+  }
+  var out = terakhir;
+  var ms = Math.round(performance.now() - t0);
+  if (action !== 'batch') Perf.catat(action, ms, out && out.ms, out && out.cached ? 'server-cache' : 'jaringan');
+  if (out._transien) {
+    delete out._transien;
+    if (!TURBO.pernahJson && out._bukanJson) {
+      out.error = 'Balasan server bukan JSON. Periksa: (1) Deploy → Web app → Who has access = "Anyone", (2) URL di js/config.js berakhiran /exec, (3) sudah Deploy ulang (New version) setelah update kode.';
+    }
+    delete out._bukanJson;
+  }
+  if (out.ok && !baca && !TANPA_EPOCH[action]) {
+    TURBO.epoch++; TURBO.terakhirTulis = Date.now();          // semua cache browser jadi basi
+    APP.cache = {};
+  }
+  if (!out.ok) {
+    if (out.code === 401 && APP.token && action !== 'auth.logout') { sesiBerakhir(); return out; }
+    if (!opt.diam && action !== 'batch') toast(out.error || 'Permintaan gagal.', 'error');
+  }
+  return out;
+}
+
+async function fetchSekali(body, batasMs) {
   var ctrl = window.AbortController ? new AbortController() : null;
-  var batas = ctrl ? setTimeout(function () { ctrl.abort(); }, opt.timeout || 90000) : null;
+  var batas = ctrl ? setTimeout(function () { ctrl.abort(); }, batasMs) : null;
   try {
     var res = await fetch(CONFIG.GAS_URL, {
       method: 'POST',
@@ -49,65 +247,109 @@ async function callApi(action, payload, opt) {
     });
     if (batas) clearTimeout(batas);
     var teks = await res.text();
-    var out;
     try {
-      out = JSON.parse(teks);
+      var out = JSON.parse(teks);
+      TURBO.pernahJson = true;
+      return out;
     } catch (e) {
-      throw new Error('Balasan server bukan JSON. Pastikan deployment memakai akses "Anyone" dan URL berakhiran /exec.');
+      // Google mengirim halaman HTML saat sibuk / kuota / batas eksekusi bersamaan → coba ulang
+      var sibuk = /too many|simultaneous|rate|quota|exceeded|timed out|unavailable|lock|server error|kesalahan/i.test(teks);
+      return { ok: false, _transien: true, _bukanJson: true, code: res.status || 502,
+               error: sibuk ? 'Server Google sedang sibuk. Sudah dicoba ulang otomatis — silakan coba lagi sebentar.'
+                            : 'Balasan server tidak valid (Google sedang gangguan). Sudah dicoba ulang otomatis — coba lagi sebentar.' };
     }
-    if (!out.ok) {
-      if (out.code === 401 && APP.token) { sesiBerakhir(); return out; }
-      if (!opt.diam) toast(out.error || 'Permintaan gagal.', 'error');
-    }
-    return out;
   } catch (e) {
     if (batas) clearTimeout(batas);
-    var pesan = e.name === 'AbortError' ? 'Server terlalu lama merespons. Coba lagi.' : e.message;
-    if (!opt.diam) toast('Koneksi gagal: ' + pesan, 'error');
-    return { ok: false, error: pesan };
+    var habis = e.name === 'AbortError';
+    return { ok: false, _transien: true, code: 0,
+             error: habis ? 'Server terlalu lama merespons. Sudah dicoba ulang otomatis — coba lagi.' : 'Koneksi internet terputus. Periksa jaringan lalu coba lagi.' };
   }
 }
 
+/* ---- Catatan performa: ketik Perf.table() di console browser ---- */
+var Perf = {
+  log: [],
+  catat: function (action, ms, msServer, sumber) {
+    this.log.push({ waktu: new Date().toLocaleTimeString('id-ID'), aksi: action, total_ms: ms, server_ms: msServer || '', sumber: sumber });
+    if (this.log.length > 300) this.log.shift();
+  },
+  table: function () { console.table(this.log.slice(-60)); return this.log.length + ' catatan'; },
+  ringkas: function () {
+    var g = {};
+    this.log.forEach(function (l) { var x = g[l.aksi] = g[l.aksi] || { n: 0, total: 0, browser: 0 }; x.n++; x.total += l.total_ms; if (l.sumber === 'browser' || l.sumber === 'basi') x.browser++; });
+    console.table(Object.keys(g).map(function (k) { return { aksi: k, panggilan: g[k].n, rata_ms: Math.round(g[k].total / g[k].n), dari_cache_browser: g[k].browser }; }));
+  }
+};
+window.Perf = Perf;
+
 /**
  * Pemanasan server — GAS "tidur" bila lama tidak dipakai (cold start 1–3 detik).
- * Ping GET ringan dikirim saat halaman dibuka, sehingga ketika pengguna selesai
- * klik "Masuk dengan Google", server sudah hangat. Tidak memicu CORS preflight.
+ * v6.2: ?w= juga memanaskan cache tabel inti di server.
  */
-function pemanasanServer() {
+var _hangat = {};
+function pemanasanServer(lingkup) {
   try {
+    lingkup = lingkup || 'pub';
     if (String(CONFIG.GAS_URL).indexOf('GANTI_DENGAN') > -1) return;
-    fetch(CONFIG.GAS_URL + '?action=ping&_=' + Date.now(), { method: 'GET', redirect: 'follow' }).catch(function () {});
+    if (_hangat[lingkup] && Date.now() - _hangat[lingkup] < 60000) return;   // cukup sekali per menit
+    _hangat[lingkup] = Date.now();
+    fetch(CONFIG.GAS_URL + '?w=' + lingkup + '&_=' + Date.now(), { method: 'GET', redirect: 'follow' }).catch(function () {});
   } catch (e) {}
 }
 
 /**
- * Stale-while-revalidate: tampilkan data terakhir dari localStorage SEKETIKA,
- * lalu segarkan dari server di latar belakang dan panggil cb lagi bila berubah.
+ * Prefetch menu utama sesuai peran di waktu senggang (gabung jadi 1 batch).
+ * Payload HARUS sama dengan yang dipakai tampilan agar kunci cache cocok.
+ */
+var PREFETCH_PERAN = {
+  STAF: [['meta.ref', {}], ['settings.list', {}]],
+  SA:  [['dashboard.admin', {}], ['residents.list', { cari: '', status: 'Aktif', gedungId: '', prodi: '', angkatan: '', paketId: '', hanyaKartu: false }],
+        ['registration.list', {}], ['crud.list', { tabel: 'Gedung' }], ['crud.list', { tabel: 'Kamar' }], ['crud.list', { tabel: 'Paket' }]],
+  PMB: [['dashboard.admin', {}], ['registration.list', {}], ['residents.list', { cari: '', status: 'Aktif', gedungId: '', prodi: '', angkatan: '', paketId: '', hanyaKartu: false }]],
+  KEU: [['dashboard.admin', {}], ['residents.list', { cari: '', status: 'Aktif', gedungId: '', prodi: '', angkatan: '', paketId: '', hanyaKartu: false }]],
+  PA:  [['dashboard.admin', {}], ['residents.list', { cari: '', status: 'Aktif', gedungId: '', prodi: '', angkatan: '', paketId: '', hanyaKartu: false }], ['registration.list', {}]],
+  PI:  [['dashboard.admin', {}], ['residents.list', { cari: '', status: 'Aktif', gedungId: '', prodi: '', angkatan: '', paketId: '', hanyaKartu: false }], ['registration.list', {}]],
+  PIM: [['dashboard.admin', {}]],
+  PNG: [['dashboard.resident', {}], ['billing.mine', {}], ['discipline.mine', {}], ['helpdesk.mine', {}]]
+};
+
+function prefetchMenu() {
+  if (!APP.user || !APP.token) return;
+  var role = APP.user.Role;
+  var daftar = (PREFETCH_PERAN[role] || []).concat(role !== 'PNG' && role !== 'PDF' ? PREFETCH_PERAN.STAF : []);
+  var jalan = function () {
+    daftar.forEach(function (d) {
+      var k = kunciCache(d[0], d[1]);
+      var c = ambilCache(k);
+      if (c && c.e === TURBO.epoch && Date.now() - c.t < TURBO.segarMs()) return;
+      if (!TURBO.terbang[k]) ambilJaringan(d[0], d[1], k, { diam: true });
+    });
+  };
+  if (window.requestIdleCallback) requestIdleCallback(jalan, { timeout: 2500 }); else setTimeout(jalan, 1200);
+}
+
+/**
+ * Stale-while-revalidate dengan callback (dipakai dashboard): data lama tampil
+ * SEKETIKA, lalu cb dipanggil lagi bila data server berbeda.
  */
 function callSWR(action, payload, cb) {
-  var kunci = 'asr_swr_' + (APP.user ? APP.user.UserID : '') + '_' + action + ':' + JSON.stringify(payload || {});
-  var lama = null;
-  try { lama = JSON.parse(localStorage.getItem(kunci) || 'null'); } catch (e) {}
-  if (lama) cb(lama, true);
-  return callApi(action, payload, { diam: !!lama }).then(function (res) {
+  var k = kunciCache(action, payload);
+  TURBO.kunciView[k] = 1;
+  var c = APP._paksa ? null : ambilCache(k);
+  if (c) {
+    cb(c.res, true);
+    if (c.e === TURBO.epoch && Date.now() - c.t < TURBO.segarMs()) return Promise.resolve(c.res);
+  }
+  return ambilJaringan(action, payload, k, { diam: !!c, segar: APP._paksa }).then(function (res) {
     if (res.ok) {
-      try { localStorage.setItem(kunci, JSON.stringify(res)); } catch (e) {}
-      if (!lama || JSON.stringify(lama.data) !== JSON.stringify(res.data)) cb(res, false);
-    } else if (!lama) cb(res, false);
+      if (!c || JSON.stringify(c.res.data) !== JSON.stringify(res.data)) cb(res, false);
+    } else if (!c) cb(res, false);
     return res;
   });
 }
 
-/** Pembacaan dengan cache browser (gas-instant-ux prinsip 2 — hindari RTT berulang) */
-async function callCached(action, payload, ttl) {
-  var kunci = action + ':' + JSON.stringify(payload || {});
-  var simpan = APP.cache[kunci];
-  var umur = ttl === undefined ? CONFIG.CACHE_TTL_MS : ttl;
-  if (simpan && Date.now() - simpan.t < umur) return simpan.v;
-  var res = await callApi(action, payload);
-  if (res.ok) APP.cache[kunci] = { t: Date.now(), v: res };
-  return res;
-}
+/** Kompatibel v6.1 — kini sama dengan callApi (cache turbo) */
+function callCached(action, payload) { return callApi(action, payload); }
 
 function bersihkanCache(prefix) {
   Object.keys(APP.cache).forEach(function (k) {
@@ -140,9 +382,9 @@ function sesiBerakhir() {
 }
 
 /**
- * Sesi disimpan di localStorage (bukan sessionStorage) → membuka ulang aplikasi
- * langsung masuk ke dashboard tanpa login ulang selama sesi server (12 jam,
- * diperpanjang otomatis tiap request) masih berlaku.
+ * Sesi disimpan di localStorage → membuka ulang aplikasi langsung masuk ke
+ * dashboard tanpa login ulang (v6.2: token HMAC staf 7 hari, mahasiswa 30 hari;
+ * dicabut otomatis saat logout / akun dinonaktifkan / sandi direset).
  */
 function simpanSesi(token, user) {
   APP.token = token; APP.user = user;
@@ -159,9 +401,10 @@ function muatSesi() {
 
 function hapusSesi() {
   APP.token = null; APP.user = null; APP.cache = {};
+  TURBO.mem = {}; TURBO.terbang = {}; TURBO.kunciView = {}; TURBO.epoch++;
   try {
     localStorage.removeItem('asr_sesi');
-    Object.keys(localStorage).forEach(function (k) { if (k.indexOf('asr_swr_') === 0) localStorage.removeItem(k); });
+    bersihkanCachePersist();
     sessionStorage.clear();
   } catch (e) {}
 }
@@ -176,6 +419,16 @@ function muatPengaturanLokal() {
   try { APP.pengaturan = JSON.parse(localStorage.getItem('asr_pengaturan') || '{}') || {}; } catch (e) { APP.pengaturan = {}; }
   if (window.__app) window.__app.pengVer++;
   return APP.pengaturan;
+}
+
+/** v6.2: batas unggahan per berkas (KB) — diatur Super Admin (MAX_UPLOAD_KB) */
+function batasUnggahKB() {
+  var n = parseInt((APP.pengaturan && APP.pengaturan.MAX_UPLOAD_KB) || APP.maxUploadKB || 1024, 10);
+  return n > 0 ? n : 1024;
+}
+function labelBatasUnggah() {
+  var kb = batasUnggahKB();
+  return kb >= 1024 ? (Math.round(kb / 102.4) / 10).toString().replace('.', ',') + ' MB' : kb + ' KB';
 }
 
 /* -------------------------------------------------------------------------
@@ -352,14 +605,15 @@ function waLink(nomor, pesan) {
 
 /**
  * Baca berkas untuk diunggah.
- * GAMBAR → dikompres (sisi terpanjang maks 1280 px, JPEG 82%) DAN dibuatkan
- * THUMBNAIL (320 px, JPEG 78%) di browser. Server hanya menyimpan keduanya,
- * dan seluruh tampilan (avatar, kartu, daftar) memakai thumbnail yang ringan.
- * PDF / berkas lain → dikirim apa adanya.
+ * GAMBAR → dikompres otomatis sampai ≤ batas unggahan (MAX_UPLOAD_KB, bawaan 1 MB;
+ * mulai 1280 px JPEG 82%, turun bertahap bila masih besar) DAN dibuatkan
+ * THUMBNAIL (320 px). Seluruh tampilan (avatar, kartu, daftar) memakai thumbnail.
+ * PDF / berkas lain → ditolak bila melebihi batas (tidak bisa dikompres di browser).
  * @returns {Promise<{nama, mime, ukuran, base64, thumb?, pratinjau?}>}
  */
 function bacaBerkas(file, opsi) {
   opsi = opsi || {};
+  var batas = batasUnggahKB() * 1024;
   var bacaDataURL = function (f) {
     return new Promise(function (resolve, reject) {
       var fr = new FileReader();
@@ -368,26 +622,38 @@ function bacaBerkas(file, opsi) {
       fr.readAsDataURL(f);
     });
   };
+  var tolak = function (pesan) { toast(pesan, 'warning'); return Promise.reject(new Error(pesan)); };
   var gambar = /^image\/(jpeg|png|webp|bmp|gif|heic|heif)$/i.test(file.type) || /\.(jpe?g|png|webp|heic)$/i.test(file.name);
   if (!gambar) {
+    if (file.size > batas) return tolak('Berkas "' + file.name + '" ' + ukuranBaca(file.size) + ' melebihi batas ' + labelBatasUnggah() + '. Kecilkan/kompres PDF lalu unggah ulang.');
     return bacaDataURL(file).then(function (url) {
       return { nama: file.name, mime: file.type || 'application/octet-stream', ukuran: file.size, base64: url.split(',')[1] };
     });
   }
   return bacaDataURL(file).then(function (url) {
     return muatGambar(url).then(function (img) {
-      var utama = kanvasJpeg(img, opsi.maks || 1280, 0.82);
+      // Kompres bertahap sampai muat dalam batas unggahan
+      var tahap = [[opsi.maks || 1280, 0.82], [1280, 0.7], [1024, 0.7], [900, 0.62], [720, 0.6], [560, 0.55]];
+      var utama = '', ukuran = 0;
+      for (var i = 0; i < tahap.length; i++) {
+        utama = kanvasJpeg(img, tahap[i][0], tahap[i][1]);
+        ukuran = Math.round((utama.length - utama.indexOf(',') - 1) * 0.75);
+        if (ukuran <= batas) break;
+      }
+      if (ukuran > batas) throw { besar: true };
       var thumb = kanvasJpeg(img, opsi.thumb || 320, 0.78);
       var namaJpg = String(file.name || 'gambar').replace(/\.[^.]+$/, '') + '.jpg';
       var out = {
-        nama: namaJpg, mime: 'image/jpeg', ukuran: Math.round(utama.length * 0.75), ukuranAsli: file.size,
+        nama: namaJpg, mime: 'image/jpeg', ukuran: ukuran, ukuranAsli: file.size,
         base64: utama.split(',')[1], thumb: thumb.split(',')[1]
       };
       // pratinjau hanya untuk tampilan — non-enumerable agar TIDAK ikut terkirim ke server
       Object.defineProperty(out, 'pratinjau', { value: thumb, enumerable: false });
       return out;
-    }).catch(function () {
-      // Format yang tidak bisa digambar browser (mis. HEIC di Chrome) → kirim asli
+    }).catch(function (e) {
+      if (e && e.besar) return tolak('Foto tidak bisa dikecilkan di bawah ' + labelBatasUnggah() + '. Gunakan foto lain.');
+      // Format yang tidak bisa digambar browser (mis. HEIC di Chrome) → kirim asli bila muat
+      if (file.size > batas) return tolak('Format foto ini tidak bisa dikompres browser dan ukurannya ' + ukuranBaca(file.size) + ' (batas ' + labelBatasUnggah() + '). Ubah ke JPG/PNG.');
       return { nama: file.name, mime: file.type, ukuran: file.size, base64: url.split(',')[1] };
     });
   });
@@ -503,7 +769,7 @@ async function buatPdfKartu(data) {
     doc.text(inisial(data.NamaLengkap), 12, 25, { align: 'center' });
   }
 
-  // Data santri
+  // Data mahasiswa
   doc.setTextColor(16, 24, 40); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.4);
   doc.text(potong(data.NamaLengkap, 26), 22, 19);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(5.6);

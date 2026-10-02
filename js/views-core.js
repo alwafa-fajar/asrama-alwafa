@@ -96,12 +96,12 @@ window.VIEWS['login'] = {
       <div>
         <span class="hero-tag">● SISTEM INFORMASI MANAJEMEN · v6.1</span>
         <h1>Asrama Kampus<br>dalam satu sistem terpadu.</h1>
-        <p>Dari pendaftaran santri, penempatan kamar, penagihan, kedisiplinan, sampai kartu makan QR — semuanya terhubung dalam satu basis data.</p>
+        <p>Dari pendaftaran mahasiswa, penempatan kamar, penagihan, kedisiplinan, sampai kartu makan QR — semuanya terhubung dalam satu basis data.</p>
       </div>
       <div class="auth-feats">
         <div class="auth-feat"><span class="ic">🔐</span><div><b>Login Google untuk staf</b><br>Tanpa sandi tambahan — akun Google resmi Anda yang dipakai.</div></div>
         <div class="auth-feat"><span class="ic">📱</span><div><b>Kartu Makan QR Code</b><br>Verifikasi jatah katering di dapur kurang dari 3 detik.</div></div>
-        <div class="auth-feat"><span class="ic">💬</span><div><b>Notifikasi WhatsApp &amp; Email</b><br>Tagihan, penempatan, dan pengumuman sampai langsung ke santri &amp; wali.</div></div>
+        <div class="auth-feat"><span class="ic">💬</span><div><b>Notifikasi WhatsApp &amp; Email</b><br>Tagihan, penempatan, dan pengumuman sampai langsung ke mahasiswa &amp; wali.</div></div>
       </div>
     </div>
 
@@ -116,7 +116,7 @@ window.VIEWS['login'] = {
         <div class="card">
           <div class="auth-seg" role="tablist">
             <button type="button" :class="{on: mode === 'staf'}" @click="mode = 'staf'" role="tab">👔 Staf</button>
-            <button type="button" :class="{on: mode === 'santri'}" @click="mode = 'santri'" role="tab">🎓 Santri</button>
+            <button type="button" :class="{on: mode === 'santri'}" @click="mode = 'santri'" role="tab">🎓 Mahasiswa</button>
           </div>
 
           <!-- ===== STAF: Google OAuth 2.0 ===== -->
@@ -165,7 +165,7 @@ window.VIEWS['login'] = {
             </form>
           </div>
 
-          <!-- ===== SANTRI: NIM/username + sandi ===== -->
+          <!-- ===== MAHASISWA: NIM/username + sandi ===== -->
           <form v-show="mode === 'santri'" @submit.prevent="masukSandi">
             <div class="field">
               <label class="label">NIM / Username / Email</label>
@@ -181,14 +181,14 @@ window.VIEWS['login'] = {
               </div>
             </div>
             <button class="btn block lg" :disabled="proses">
-              <span v-if="proses" class="spin"></span>{{ proses ? 'Memverifikasi…' : 'Masuk sebagai Santri' }}
+              <span v-if="proses" class="spin"></span>{{ proses ? 'Memverifikasi…' : 'Masuk sebagai Mahasiswa' }}
             </button>
             <p class="auth-note">Sandi awal dikirim lewat WhatsApp/email setelah pendaftaran Anda diterima.</p>
           </form>
         </div>
 
         <div class="text-center fs-sm txt-2">
-          Calon santri baru?
+          Calon mahasiswa baru?
           <a href="#" @click.prevent="$emit('pindah','daftar')"><b>Isi formulir pendaftaran</b></a> ·
           <a href="#" @click.prevent="$emit('pindah','status-daftar')">Cek status</a>
         </div>
@@ -267,7 +267,7 @@ window.VIEWS['dashboard'] = {
         <sa-kpi label="Total Penghuni Aktif" :nilai="angka(d.kpi.totalPenghuni)" ikon="👥"
                 :persen="d.kpi.persenOkupansi"
                 :catatan="'Kapasitas ' + angka(d.kpi.kapasitas) + ' bed · ' + d.kpi.persenOkupansi + '%'"
-                :tren="'↑ +' + d.kpi.penghuniBaruSemesterIni + ' santri baru'"></sa-kpi>
+                :tren="'↑ +' + d.kpi.penghuniBaruSemesterIni + ' mahasiswa baru'"></sa-kpi>
 
         <sa-kpi label="Pendaftar Gelombang Ini" :nilai="angka(d.kpi.pendaftarTotal)" ikon="📝" warna="warn"
                 :catatan="d.kpi.pendaftarMenunggu + ' menunggu verifikasi'"></sa-kpi>
@@ -334,7 +334,7 @@ window.VIEWS['dashboard'] = {
           </div>
           <div class="table-wrap" v-if="d.pendaftarMenunggu.length">
             <table class="tbl">
-              <thead><tr><th>Santri / ID</th><th>Prodi</th><th>Status</th><th></th></tr></thead>
+              <thead><tr><th>Mahasiswa / ID</th><th>Prodi</th><th>Status</th><th></th></tr></thead>
               <tbody>
                 <tr v-for="p in d.pendaftarMenunggu" :key="p.PendaftarID">
                   <td>
@@ -367,7 +367,7 @@ window.VIEWS['dashboard'] = {
           </div>
           <div class="table-wrap" v-if="d.pembayaranMenunggu.length">
             <table class="tbl">
-              <thead><tr><th>Kwitansi / Santri</th><th class="num">Nominal</th><th>Bukti</th><th>Tindakan</th></tr></thead>
+              <thead><tr><th>Kwitansi / Mahasiswa</th><th class="num">Nominal</th><th>Bukti</th><th>Tindakan</th></tr></thead>
               <tbody>
                 <tr v-for="b in d.pembayaranMenunggu" :key="b.PembayaranID">
                   <td>
@@ -432,7 +432,7 @@ window.VIEWS['dashboard-penghuni'] = {
     <template v-else-if="d">
       <div class="hero">
         <div class="txt">
-          <span class="hero-tag">● PORTAL SANTRI</span>
+          <span class="hero-tag">● PORTAL MAHASISWA</span>
           <h2>Ahlan wa Sahlan, {{ d.penghuni.NamaLengkap }}</h2>
           <p>{{ d.gedung.NamaGedung }} · Kamar {{ d.kamar.NomorKamar }} · {{ d.paket.NamaPaket }}</p>
         </div>
@@ -440,6 +440,11 @@ window.VIEWS['dashboard-penghuni'] = {
           <button class="btn secondary" @click="$emit('pindah','tagihan-saya')">💳 Tagihan Saya</button>
           <button class="btn" v-if="d.kartuAktif" @click="$emit('pindah','kartu-saya')">⬚ Kartu Makan QR</button>
         </div>
+      </div>
+
+      <div class="info-box warn mb-md" v-if="!(d.penghuni.FotoThumbID || d.penghuni.FotoID)" style="align-items:center">
+        <span>📷</span><div class="flex-1"><b>Foto profil Anda belum ada.</b> Foto wajib — dipakai di profil &amp; Kartu Makan.</div>
+        <button class="btn sm" @click="$emit('pindah','profil')">Unggah Foto Sekarang</button>
       </div>
 
       <div class="grid grid-4 mb-md">
@@ -504,8 +509,23 @@ window.VIEWS['dashboard-penghuni'] = {
  * ======================================================================= */
 window.VIEWS['profil'] = {
   props: ['user'],
-  data: function () { return { lama: '', baru: '', ulangi: '', proses: false }; },
+  data: function () { return { lama: '', baru: '', ulangi: '', proses: false, foto: null, fotoBaru: null, adaFoto: true, prosesFoto: false }; },
+  mounted: function () {
+    var self = this;
+    if (this.user.Role === 'PNG') {        // v6.2: foto profil wajib untuk mahasiswa
+      callApi('residents.profile', {}, { diam: true }).then(function (r) {
+        if (r.ok) { self.foto = r.data.penghuni.FotoURL || null; self.adaFoto = !!(r.data.penghuni.FotoThumbID || r.data.penghuni.FotoID); }
+      });
+    }
+  },
   methods: {
+    simpanFoto: async function () {
+      if (!this.fotoBaru) return;
+      this.prosesFoto = true;
+      var res = await callApi('residents.uploadFoto', { foto: this.fotoBaru });
+      this.prosesFoto = false;
+      if (res.ok) { this.foto = res.data.FotoURLBesar || res.data.FotoURL; this.adaFoto = true; this.fotoBaru = null; toast(res.message, 'success'); }
+    },
     simpan: async function () {
       if (this.baru.length < 6) { toast('Kata sandi baru minimal 6 karakter.', 'warning'); return; }
       if (this.baru !== this.ulangi) { toast('Konfirmasi kata sandi tidak sama.', 'warning'); return; }
@@ -523,7 +543,7 @@ window.VIEWS['profil'] = {
       <div class="card">
         <div class="card-head"><div class="t"><div class="card-title">Identitas Akun</div></div></div>
         <div class="flex items-center gap-md mb-md">
-          <sa-avatar :nama="user.NamaLengkap" :foto="user.FotoGoogle" ukuran="lg"></sa-avatar>
+          <sa-avatar :nama="user.NamaLengkap" :foto="foto || user.FotoGoogle" ukuran="lg"></sa-avatar>
           <div>
             <div class="fw7" style="font-size:17px">{{ user.NamaLengkap }}</div>
             <span class="badge info">{{ user.RoleNama || user.Role }}</span>
@@ -534,6 +554,13 @@ window.VIEWS['profil'] = {
         <sa-kv k="Email" :v="user.Email || '-'"></sa-kv>
         <sa-kv k="Jenis Kelamin" :v="user.JenisKelamin === 'L' ? 'Laki-laki' : (user.JenisKelamin === 'P' ? 'Perempuan' : '-')"></sa-kv>
         <sa-kv k="Metode Masuk" :v="user.Metode === 'google' ? 'Google OAuth 2.0' : (user.Metode === 'darurat' ? 'Sandi (darurat SA)' : 'Username & sandi')"></sa-kv>
+        <div v-if="user.Role === 'PNG'" class="mt-md">
+          <div v-if="!adaFoto" class="info-box warn mb-sm"><span>📷</span><div><b>Foto profil wajib.</b> Foto dipakai di profil &amp; Kartu Makan.</div></div>
+          <sa-foto-upload v-model="fotoBaru" :nama="user.NamaLengkap" :foto-lama="foto"
+                          :label="adaFoto ? 'Foto Profil (ganti bila perlu)' : 'Foto Profil'"></sa-foto-upload>
+          <div class="text-right mt-sm" v-if="fotoBaru"><button class="btn sm" :disabled="prosesFoto" @click="simpanFoto">
+            <span v-if="prosesFoto" class="spin"></span>Simpan Foto</button></div>
+        </div>
       </div>
 
       <div class="card" v-if="user.Metode === 'google'">
@@ -579,6 +606,8 @@ window.VIEWS['daftar'] = {
     };
   },
   mounted: async function () {
+    // v6.2: batas unggahan (diatur Super Admin) diambil bersamaan dengan referensi
+    callApi('auth.config', {}, { diam: true }).then(function (r) { if (r.ok && r.data.maxUploadKB) APP.maxUploadKB = r.data.maxUploadKB; });
     var res = await callApi('meta.ref', {});
     this.memuat = false;
     if (res.ok) this.ref = res.data;
@@ -598,14 +627,10 @@ window.VIEWS['daftar'] = {
     pilihBerkas: async function (jenis, ev) {
       var file = ev.target.files[0];
       if (!file) return;
-      // Gambar boleh besar (foto kamera HP) — dikompres + dibuat thumbnail di browser
-      var gambar = /^image\//.test(file.type);
-      if (file.size > (gambar ? 15 : 2) * 1024 * 1024) {
-        toast('Ukuran berkas maksimal ' + (gambar ? '15 MB (foto)' : '2 MB (PDF)') + '.', 'warning'); ev.target.value = ''; return;
-      }
-      var b = await bacaBerkas(file);
-      if (b.ukuran > 2 * 1024 * 1024) { toast('Berkas masih lebih dari 2 MB setelah dikompres.', 'warning'); ev.target.value = ''; return; }
-      this.berkas[jenis] = b;
+      // v6.2: foto dikompres otomatis sampai ≤ batas unggahan; PDF ditolak bila melebihi batas
+      if (jenis === 'foto' && !/^image\//.test(file.type)) { toast('Pas foto harus berupa gambar.', 'warning'); ev.target.value = ''; return; }
+      try { this.berkas[jenis] = await bacaBerkas(file); }
+      catch (e) { ev.target.value = ''; }
     },
     hpValid: function (v) { return /^(\+?62|0)?8\d{8,12}$/.test(String(v || '').replace(/[\s.-]/g, '')); },
     kirim: async function () {
@@ -636,7 +661,7 @@ window.VIEWS['daftar'] = {
     </template>
 
     <template v-else>
-      <sa-page judul="Formulir Pendaftaran Santri Baru"
+      <sa-page judul="Formulir Pendaftaran Mahasiswa Baru"
                :sub="'Asrama ' + (ref ? ref.institusi : '') + ' · Tahun Akademik ' + (ref ? ref.tahunAkademik : '')"
                :jalur="['Portal Publik','Formulir Pendaftaran']">
         <template #aksi><button class="btn secondary" @click="$emit('pindah','login')">← Halaman Masuk</button></template>
@@ -648,7 +673,7 @@ window.VIEWS['daftar'] = {
 
       <form @submit.prevent="kirim" v-if="ref && ref.pendaftaranDibuka">
         <div class="card">
-          <div class="card-head"><div class="t"><div class="card-title">1. Data Diri Santri</div></div></div>
+          <div class="card-head"><div class="t"><div class="card-title">1. Data Diri Mahasiswa</div></div></div>
           <div class="grid grid-2 gap-md">
             <div class="field"><label class="label">Nama Lengkap <span class="req">*</span></label>
               <input class="input" v-model.trim="f.NamaLengkap" required></div>
@@ -715,7 +740,7 @@ window.VIEWS['daftar'] = {
 
         <div class="card">
           <div class="card-head"><div class="t"><div class="card-title">3. Unggah Berkas</div>
-            <div class="card-sub">Foto langsung dari kamera HP boleh — otomatis dikompres &amp; dibuatkan thumbnail. PDF maks 2 MB.</div></div></div>
+            <div class="card-sub">Foto langsung dari kamera HP boleh — otomatis dikompres &amp; dibuatkan thumbnail. Setiap berkas maks {{ labelBatasUnggah() }}. Pas foto WAJIB.</div></div></div>
           <div class="grid grid-3 gap-md">
             <div class="field"><label class="label">Pas Foto <span class="req">*</span></label>
               <input type="file" class="input" accept="image/*" @change="pilihBerkas('foto',$event)" style="padding:8px">
@@ -789,7 +814,7 @@ window.VIEWS['status-daftar'] = {
         <sa-kv k="Catatan Verifikator" :v="hasil.Catatan || '—'"></sa-kv>
 
         <div class="info-box mt-md" v-if="hasil.Status === 'Diterima'">
-          <span>🎉</span><div><b>Selamat, Anda diterima!</b> Akun santri sudah dibuat. Hubungi bagian PMB untuk mendapatkan sandi awal, lalu masuk melalui halaman login.</div>
+          <span>🎉</span><div><b>Selamat, Anda diterima!</b> Akun mahasiswa sudah dibuat. Hubungi bagian PMB untuk mendapatkan sandi awal, lalu masuk melalui halaman login.</div>
         </div>
         <div class="info-box warn mt-md" v-else-if="hasil.Status === 'Perlu Revisi'">
           <span>⚠️</span><div>Berkas Anda perlu diperbaiki sesuai catatan di atas. Silakan hubungi PMB.</div>

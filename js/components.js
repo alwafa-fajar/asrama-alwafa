@@ -1,5 +1,5 @@
 /* ==========================================================================
- * SIM ASRAMA v6.0 — KOMPONEN BERSAMA (Vue 3, Options API)
+ * SIM ASRAMA v6.2 — KOMPONEN BERSAMA (Vue 3, Options API)
  * Didaftarkan global di app.js: <sa-kpi>, <sa-badge>, <sa-modal>, dll.
  * ========================================================================== */
 
@@ -51,6 +51,47 @@ window.KOMPONEN = {
         <template v-else>{{ ini }}</template>
       </span>`,
     computed: { ini: function () { return inisial(this.nama); } }
+  },
+
+  /* v6.2: pemilih foto profil (WAJIB) — kompres otomatis ≤ batas unggahan + pratinjau thumbnail */
+  'sa-foto-upload': {
+    props: { modelValue: Object, label: { type: String, default: 'Foto Profil' }, wajib: { type: Boolean, default: true },
+             fotoLama: String, nama: String },
+    emits: ['update:modelValue'],
+    data: function () { return { proses: false }; },
+    computed: {
+      pratinjau: function () { return this.modelValue ? this.modelValue.pratinjau : this.fotoLama; },
+      batas: function () { return labelBatasUnggah(); }
+    },
+    methods: {
+      pilih: async function (ev) {
+        var f = ev.target.files && ev.target.files[0];
+        if (!f) return;
+        if (!/^image\//.test(f.type) && !/\.(jpe?g|png|webp|heic)$/i.test(f.name)) { toast('Foto profil harus berupa gambar (JPG/PNG).', 'warning'); ev.target.value = ''; return; }
+        this.proses = true;
+        try { this.$emit('update:modelValue', await bacaBerkas(f)); }
+        catch (e) { ev.target.value = ''; }
+        this.proses = false;
+      },
+      hapus: function () { this.$emit('update:modelValue', null); }
+    },
+    template: `
+      <div class="foto-upload" :class="{kosong: !pratinjau && wajib}">
+        <span class="avatar xl foto-prev">
+          <img v-if="pratinjau" :src="pratinjau" alt="Pratinjau foto" style="width:100%;height:100%;object-fit:cover">
+          <template v-else>{{ nama ? inisial(nama) : '📷' }}</template>
+        </span>
+        <div class="flex-1">
+          <div class="label" style="margin-bottom:4px">{{ label }} <span class="req" v-if="wajib">*</span></div>
+          <label class="btn sm secondary" style="cursor:pointer">
+            <span v-if="proses" class="spin dark"></span>{{ pratinjau ? '🔄 Ganti foto' : '📷 Pilih / ambil foto' }}
+            <input type="file" accept="image/*" capture="user" class="hide" @change="pilih">
+          </label>
+          <button v-if="modelValue" type="button" class="btn xs ghost" @click="hapus">✕</button>
+          <div class="fs-xs txt-3 mt-sm">Wajib — jadi thumbnail di profil &amp; Kartu Makan. Dikompres otomatis (maks {{ batas }}).
+            <span v-if="modelValue"> · {{ ukuranBaca(modelValue.ukuran) }}</span></div>
+        </div>
+      </div>`
   },
 
   /* Thumbnail berkas (bukti bayar, lampiran, dokumen) — klik untuk buka ukuran penuh */

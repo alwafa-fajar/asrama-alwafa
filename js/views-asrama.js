@@ -37,7 +37,7 @@ window.VIEWS['pendaftar'] = {
   },
   methods: {
     muat: async function () {
-      this.memuat = true;
+      this.memuat = !APP._latar;
       var res = await callApi('registration.list', {});
       this.memuat = false;
       if (res.ok) this.rows = res.data;
@@ -65,11 +65,11 @@ window.VIEWS['pendaftar'] = {
         if (this.aksi === 'terima') {
           Swal.fire({
             icon: 'success', title: 'Pendaftar Diterima',
-            html: '<div style="text-align:left;font-size:13px">Akun santri dibuat otomatis.<br><br>' +
+            html: '<div style="text-align:left;font-size:13px">Akun mahasiswa dibuat otomatis.<br><br>' +
                   '<b>Username:</b> <code>' + res.data.username + '</code><br>' +
                   '<b>Sandi awal:</b> <code>' + res.data.sandiAwal + '</code><br>' +
                   '<b>Tagihan dibuat:</b> ' + res.data.jumlahTagihan + ' periode<br><br>' +
-                  '<span style="color:#92400E">Bila notifikasi WhatsApp/Email aktif, username &amp; sandi ini sudah otomatis dikirim ke santri. ' +
+                  '<span style="color:#92400E">Bila notifikasi WhatsApp/Email aktif, username &amp; sandi ini sudah otomatis dikirim ke mahasiswa. ' +
                   'Bila belum, sampaikan manual lalu minta segera menggantinya.</span></div>',
             confirmButtonColor: '#2563EB'
           });
@@ -84,12 +84,12 @@ window.VIEWS['pendaftar'] = {
   template: `
   <div>
     <sa-page judul="Verifikasi Berkas Pendaftar"
-             sub="Tinjau data dan berkas calon santri, lalu putuskan: terima, minta revisi, atau tolak."
+             sub="Tinjau data dan berkas calon mahasiswa, lalu putuskan: terima, minta revisi, atau tolak."
              :jalur="['Operasional Asrama','Pendaftaran','Verifikasi']">
       <template #aksi>
         <button class="btn secondary" :disabled="cekWA.jalan" @click="deteksiWA" title="Cek nomor HP pendaftar terdaftar di WhatsApp (via Fonnte)">
           <span v-if="cekWA.jalan" class="spin dark"></span>📱 {{ cekWA.jalan ? ('Mengecek ' + cekWA.selesai + '/' + cekWA.total) : 'Deteksi Nomor WA' }}</button>
-        <button class="btn secondary" @click="muat">↻ Segarkan</button>
+        <button class="btn secondary" @click="segarkan(muat)">↻ Segarkan</button>
       </template>
     </sa-page>
 
@@ -114,7 +114,7 @@ window.VIEWS['pendaftar'] = {
       <div class="table-wrap" v-else-if="tersaring.length">
         <table class="tbl">
           <thead><tr>
-            <th>Santri / ID</th><th>Prodi &amp; Angkatan</th><th>Paket</th><th>Berkas</th>
+            <th>Mahasiswa / ID</th><th>Prodi &amp; Angkatan</th><th>Paket</th><th>Berkas</th>
             <th>Tanggal</th><th>Status</th><th>Tindakan</th>
           </tr></thead>
           <tbody>
@@ -198,7 +198,7 @@ window.VIEWS['pendaftar'] = {
         </div>
         <div class="info-box" v-if="aksi==='terima'">
           <span>ℹ️</span>
-          <div>Saat diterima, sistem otomatis membuat: <b>akun santri + sandi awal</b>, <b>record penghuni</b> (skor 100),
+          <div>Saat diterima, sistem otomatis membuat: <b>akun mahasiswa + sandi awal</b>, <b>record penghuni</b> (skor 100),
           dan <b>tagihan</b> sesuai status pembayaran di muka. Keputusan ini bersifat final (BR-2).</div>
         </div>
       </div>
@@ -226,39 +226,65 @@ window.VIEWS['penghuni'] = {
       rows: [], ringkasan: {}, memuat: true, ref: null,
       f: { cari: '', status: 'Aktif', gedungId: '', prodi: '', angkatan: '', paketId: '', hanyaKartu: false },
       detail: null, detailData: null, halaman: 1, perHal: 12,
-      tambah: false, baru: {}, proses: false
+      tambah: false, baru: {}, fotoBaru: null, kirimAkun: true, proses: false,
+      lihatSandi: {}, fotoGanti: null, unggahFoto: false, hanyaTanpaFoto: false
     };
   },
-  mounted: async function () {
-    var r = await callCached('meta.ref', {});
-    if (r.ok) this.ref = r.data;
+  mounted: function () {
+    var self = this;
+    // v6.2: referensi & data dimuat PARALEL (digabung jadi 1 batch); data tampil seketika dari cache
+    callCached('meta.ref', {}).then(function (r) { if (r.ok) self.ref = r.data; });
     this.muat();
   },
   computed: {
-    halTotal: function () { return Math.max(1, Math.ceil(this.rows.length / this.perHal)); },
+    // v6.2: pencarian & filter foto di browser → instan tanpa menunggu server
+    tersaring: function () {
+      var q = String(this.f.cari || '').toLowerCase().trim(), tf = this.hanyaTanpaFoto;
+      if (!q && !tf) return this.rows;
+      return this.rows.filter(function (r) {
+        if (tf && r.AdaFoto) return false;
+        if (!q) return true;
+        return String(r.NamaLengkap).toLowerCase().indexOf(q) > -1 || String(r.NIM).toLowerCase().indexOf(q) > -1 ||
+               String(r.Email).toLowerCase().indexOf(q) > -1 || String(r.NomorKamar).toLowerCase().indexOf(q) > -1 ||
+               (r.Akun && String(r.Akun.Username).toLowerCase().indexOf(q) > -1);
+      });
+    },
+    halTotal: function () { return Math.max(1, Math.ceil(this.tersaring.length / this.perHal)); },
     tampil: function () {
       var m = (this.halaman - 1) * this.perHal;
-      return this.rows.slice(m, m + this.perHal);
+      return this.tersaring.slice(m, m + this.perHal);
     },
-    bolehKelola: function () { return ['SA','PMB','PA','PI'].indexOf(this.user.Role) > -1; }
+    bolehKelola: function () { return ['SA','PMB','PA','PI'].indexOf(this.user.Role) > -1; },
+    isSA: function () { return this.user.Role === 'SA'; },
+    akunDetail: function () {
+      if (!this.detail) return null;
+      var r = this.rows.filter(function (x) { return x.PenghuniID === this.detail.PenghuniID; }, this)[0];
+      return r && r.Akun ? r.Akun : null;
+    }
   },
   watch: {
-    'f.cari': function () { this.cariDebounce(); }
+    'f.cari': function () { this.halaman = 1; },
+    hanyaTanpaFoto: function () { this.halaman = 1; }
   },
-  created: function () { this.cariDebounce = debounce(this.muat, CONFIG.DEBOUNCE_MS); },
   methods: {
     muat: async function () {
-      this.memuat = true; this.halaman = 1;
-      var res = await callApi('residents.list', this.f);
+      this.memuat = !APP._latar;
+      if (!APP._latar) this.halaman = 1;
+      // kata kunci dicari di browser; server cukup menyaring status/gedung/angkatan/paket
+      var res = await callApi('residents.list', Object.assign({}, this.f, { cari: '' }));
       this.memuat = false;
-      if (res.ok) { this.rows = res.data.rows; this.ringkasan = res.data.ringkasan; }
+      if (res.ok) {
+        this.rows = res.data.rows; this.ringkasan = res.data.ringkasan;
+        if (this.halaman > this.halTotal) this.halaman = 1;
+      }
     },
     resetFilter: function () {
       this.f = { cari: '', status: 'Aktif', gedungId: '', prodi: '', angkatan: '', paketId: '', hanyaKartu: false };
+      this.hanyaTanpaFoto = false;
       this.muat();
     },
     bukaDetail: async function (r) {
-      this.detail = r; this.detailData = null;
+      this.detail = r; this.detailData = null; this.fotoGanti = null; this.unggahFoto = false;
       var res = await callApi('residents.profile', { penghuniId: r.PenghuniID });
       if (res.ok) this.detailData = res.data;
     },
@@ -281,32 +307,83 @@ window.VIEWS['penghuni'] = {
       }, 'card.approveEligible', { penghuniId: r.PenghuniID, eligible: !r.EligibleKartu });
     },
     simpanBaru: async function () {
+      if (!this.baru.NamaLengkap || !this.baru.JenisKelamin || !this.baru.PaketID) { toast('Nama, jenis kelamin, dan paket wajib diisi.', 'warning'); return; }
+      if (!this.fotoBaru) { toast('Foto profil wajib diunggah.', 'warning'); return; }
       this.proses = true;
-      var res = await callApi('residents.create', { data: this.baru });
+      var res = await callApi('residents.create', { data: this.baru, foto: this.fotoBaru, kirimAkun: this.kirimAkun });
       this.proses = false;
       if (res.ok) {
         Swal.fire({ icon: 'success', title: 'Penghuni ditambahkan',
-          html: 'Username: <code>' + res.data.username + '</code><br>Sandi awal: <code>' + res.data.sandiAwal + '</code>',
+          html: 'Username: <code>' + res.data.username + '</code><br>Sandi awal: <code>' + res.data.sandiAwal + '</code>' +
+                (res.data.terkirim ? '<br><br><small>📨 Info akun diantrekan ke WA/Email (' + res.data.terkirim + ' pesan).</small>' : ''),
           confirmButtonColor: '#2563EB' });
-        this.tambah = false; this.baru = {}; bersihkanCache(); this.muat();
+        this.tambah = false; this.baru = {}; this.fotoBaru = null; bersihkanCache(); this.muat();
       }
     },
+    /* ---- v6.2: foto profil wajib ---- */
+    simpanFoto: async function () {
+      if (!this.fotoGanti || !this.detail) return;
+      this.proses = true;
+      var res = await callApi('residents.uploadFoto', { penghuniId: this.detail.PenghuniID, foto: this.fotoGanti });
+      this.proses = false;
+      if (res.ok) {
+        var id = this.detail.PenghuniID, url = res.data.FotoURL;
+        this.rows.forEach(function (r) { if (r.PenghuniID === id) { r.FotoURL = url; r.AdaFoto = true; } });
+        if (this.detailData) this.detailData.penghuni.FotoURL = res.data.FotoURLBesar || url;
+        this.fotoGanti = null; this.unggahFoto = false;
+        toast('Foto profil tersimpan — kartu makan ikut diperbarui.', 'success');
+      }
+    },
+    /* ---- v6.2: akun (Super Admin) ---- */
+    toggleSandi: function (id) { this.lihatSandi = Object.assign({}, this.lihatSandi, { [id]: !this.lihatSandi[id] }); },
+    salin: function (teks) {
+      try { navigator.clipboard.writeText(teks); toast('Disalin.', 'success'); } catch (e) { toast(teks, 'info'); }
+    },
+    resetSandi: async function (r) {
+      if (!r.Akun || !r.Akun.UserID) { toast('Mahasiswa ini belum memiliki akun.', 'warning'); return; }
+      var pilih = await Swal.fire({
+        title: 'Reset sandi ' + r.NamaLengkap + '?',
+        html: '<div style="text-align:left;font-size:13px">Sandi baru dibuat otomatis &amp; semua sesi login lama di perangkat mahasiswa ini berakhir.</div>' +
+              '<label style="display:flex;gap:8px;align-items:center;justify-content:center;margin-top:12px;font-size:13px">' +
+              '<input type="checkbox" id="kirimReset" checked> Kirim sandi baru via WhatsApp/Email (sesuai saklar notifikasi)</label>',
+        icon: 'warning', showCancelButton: true, confirmButtonText: 'Reset sandi', cancelButtonText: 'Batal',
+        confirmButtonColor: '#DC2626',
+        preConfirm: function () { return { kirim: document.getElementById('kirimReset').checked }; }
+      });
+      if (!pilih.isConfirmed) return;
+      var res = await callApi('auth.resetPassword', { userId: r.Akun.UserID, kirim: pilih.value.kirim });
+      if (res.ok) {
+        r.Akun.SandiAwal = res.data.sandiBaru;
+        this.lihatSandi = Object.assign({}, this.lihatSandi, { [r.PenghuniID]: true });
+        Swal.fire({ icon: 'success', title: 'Sandi direset',
+          html: 'Username: <code>' + res.data.username + '</code><br>Sandi baru: <code>' + res.data.sandiBaru + '</code>' +
+                (res.data.terkirim ? '<br><br><small>📨 Dikirim ke WA/Email (' + res.data.terkirim + ' pesan antre).</small>' :
+                 (pilih.value.kirim ? '<br><br><small style="color:#B45309">Tidak ada pesan terkirim — cek saklar WA/Email & matriks "Sandi direset".</small>' : '')),
+          confirmButtonColor: '#2563EB' });
+      }
+    },
+    blastAkun: function () { APP.presetBlast = 'akun'; this.$emit('pindah', 'notifikasi-wa'); },
     ekspor: function () {
-      unduhExcel(this.rows.map(function (r) {
-        return { NIM: r.NIM, Nama: r.NamaLengkap, JK: r.JenisKelamin, Prodi: r.Prodi, Angkatan: r.Angkatan,
-                 Gedung: r.NamaGedung, Kamar: r.NomorKamar, Paket: r.NamaPaket, Skor: r.Skor, Status: r.Status };
+      var sa = this.isSA;
+      unduhExcel(this.tersaring.map(function (r) {
+        var o = { NIM: r.NIM, Nama: r.NamaLengkap, JK: r.JenisKelamin, Prodi: r.Prodi, Angkatan: r.Angkatan,
+                  Gedung: r.NamaGedung, Kamar: r.NomorKamar, Paket: r.NamaPaket, Skor: r.Skor, Status: r.Status,
+                  Foto: r.AdaFoto ? 'Ada' : 'BELUM' };
+        if (sa && r.Akun) { o.Username = r.Akun.Username; o.StatusAkun = r.Akun.Status; o.LoginTerakhir = r.Akun.LastLogin; }
+        return o;
       }), 'Penghuni_' + new Date().toISOString().substring(0, 10), 'Penghuni');
     },
     kelasSkor: function (s) { return s >= 90 ? 'ok' : (s >= 75 ? 'warn' : 'danger'); }
   },
   template: `
   <div>
-    <sa-page judul="Manajemen Data Penghuni &amp; Verifikasi Santri"
-             sub="Kelola data pokok mahasantri aktif, pantau skor kedisiplinan, dan percepat penyesuaian alokasi kamar."
+    <sa-page judul="Manajemen Data Penghuni &amp; Verifikasi Mahasiswa"
+             sub="Kelola data pokok mahasiswa aktif, akun login, foto profil wajib, skor kedisiplinan, dan alokasi kamar."
              :jalur="['Operasional Asrama','Manajemen Penghuni']">
       <template #aksi>
         <button class="btn secondary" @click="ekspor">⬇ Ekspor Excel</button>
-        <button class="btn dark" v-if="bolehKelola" @click="tambah = true; baru = {}">＋ Tambah Penghuni</button>
+        <button class="btn secondary" v-if="isSA" @click="blastAkun" title="Kirim username & sandi ke setiap mahasiswa via WA/Email">📣 Blast Akses Akun</button>
+        <button class="btn dark" v-if="bolehKelola" @click="tambah = true; baru = {}; fotoBaru = null">＋ Tambah Penghuni</button>
       </template>
     </sa-page>
 
@@ -317,14 +394,18 @@ window.VIEWS['penghuni'] = {
               catatan="Menunggu penempatan"></sa-kpi>
       <sa-kpi label="Indeks Kedisiplinan" :nilai="ringkasan.rataSkor || 0" satuan="/100" ikon="🛡"
               :warna="(ringkasan.rataSkor||0) >= 90 ? 'ok' : 'warn'"
-              :catatan="(ringkasan.perluPembinaan || 0) + ' santri butuh pembinaan'"></sa-kpi>
-      <sa-kpi label="Berhak Kartu Makan" :nilai="angka(ringkasan.eligibleKartu || 0)" ikon="🍽" warna="ok"
-              catatan="Paket katering aktif"></sa-kpi>
+              :catatan="(ringkasan.perluPembinaan || 0) + ' mahasiswa butuh pembinaan'"></sa-kpi>
+      <div class="kpi klik" @click="hanyaTanpaFoto = !hanyaTanpaFoto" title="Klik untuk menampilkan yang belum berfoto">
+        <div class="kpi-top"><div><div class="kpi-label">Belum Ada Foto Profil</div>
+          <div class="kpi-value">{{ angka(ringkasan.tanpaFoto || 0) }}</div></div>
+          <div class="kpi-icon" :class="(ringkasan.tanpaFoto||0) ? 'warn' : 'ok'">📷</div></div>
+        <div class="kpi-foot"><span>{{ hanyaTanpaFoto ? '✓ Filter aktif — klik lagi untuk semua' : 'Wajib untuk Kartu Makan · klik untuk saring' }}</span></div>
+      </div>
     </div>
 
     <div class="card">
       <div class="filters">
-        <input class="input flex-1" v-model="f.cari" placeholder="🔍 Cari nama, NIM, atau email…" style="min-width:240px">
+        <input class="input flex-1" v-model="f.cari" placeholder="🔍 Cari nama, NIM, email, kamar, username… (instan)" style="min-width:240px">
         <select class="select" v-model="f.status" @change="muat">
           <option value="">Semua status</option>
           <option>Aktif</option><option>Nonaktif</option><option>Keluar</option><option>Alumni</option>
@@ -342,33 +423,58 @@ window.VIEWS['penghuni'] = {
           <option v-for="p in ref.paket" :key="p.PaketID" :value="p.PaketID">{{ p.NamaPaket }}</option>
         </select>
         <label class="check"><input type="checkbox" v-model="f.hanyaKartu" @change="muat"> Hanya paket katering</label>
+        <label class="check"><input type="checkbox" v-model="hanyaTanpaFoto"> Belum berfoto</label>
         <button class="btn sm ghost" @click="resetFilter">Reset filter</button>
       </div>
 
       <sa-loading v-if="memuat"></sa-loading>
-      <template v-else-if="rows.length">
+      <template v-else-if="tersaring.length">
         <div class="table-wrap">
           <table class="tbl">
             <thead><tr>
-              <th>Mahasantri &amp; Identitas</th><th>Kamar &amp; Bed</th><th>Kartu Makan</th>
+              <th>Mahasiswa &amp; Identitas</th>
+              <th v-if="isSA" title="Hanya terlihat oleh Super Admin">🔐 Akun Login</th>
+              <th>Kamar &amp; Bed</th><th>Kartu Makan</th>
               <th>Skor Disiplin</th><th>Status</th><th>Tindakan</th>
             </tr></thead>
             <tbody>
               <tr v-for="r in tampil" :key="r.PenghuniID" :class="{sel: detail && detail.PenghuniID === r.PenghuniID}">
                 <td>
                   <div class="person">
-                    <sa-avatar :nama="r.NamaLengkap" :foto="r.FotoURL"></sa-avatar>
+                    <span :class="{'tanpa-foto': !r.AdaFoto}" :title="r.AdaFoto ? '' : 'Belum ada foto profil (wajib)'">
+                      <sa-avatar :nama="r.NamaLengkap" :foto="r.FotoURL"></sa-avatar></span>
                     <div class="nm"><b>{{ r.NamaLengkap }}</b>
-                      <span class="mono">{{ r.NIM || r.PenghuniID }} · {{ r.Prodi || '-' }}</span></div>
+                      <span class="mono">{{ r.NIM || r.PenghuniID }} · {{ r.Prodi || '-' }}</span>
+                      <span v-if="!r.AdaFoto" class="fs-xs" style="color:#B45309">📷 belum berfoto</span></div>
                   </div>
+                </td>
+                <td v-if="isSA" class="akun-sel">
+                  <template v-if="r.Akun && r.Akun.Username">
+                    <div>👤 <code>{{ r.Akun.Username }}</code>
+                      <button class="icon-btn" title="Salin username" @click="salin(r.Akun.Username)">⧉</button></div>
+                    <div class="sandi">🔑
+                      <template v-if="r.Akun.SandiAwal">
+                        <code>{{ lihatSandi[r.PenghuniID] ? r.Akun.SandiAwal : '••••••••' }}</code>
+                        <button class="icon-btn" :title="lihatSandi[r.PenghuniID] ? 'Sembunyikan' : 'Tampilkan sandi'" @click="toggleSandi(r.PenghuniID)">{{ lihatSandi[r.PenghuniID] ? '🙈' : '👁' }}</button>
+                        <button class="icon-btn" v-if="lihatSandi[r.PenghuniID]" title="Salin sandi" @click="salin(r.Akun.SandiAwal)">⧉</button>
+                      </template>
+                      <span v-else class="txt-3 fs-xs" title="Sandi sudah diganti mahasiswa — tidak bisa dilihat, hanya bisa direset">diganti mahasiswa</span>
+                    </div>
+                    <div class="fs-xs txt-3">
+                      <span :style="{color: r.Akun.Status === 'Aktif' ? '' : '#DC2626'}">{{ r.Akun.Status }}</span> ·
+                      {{ r.Akun.LastLogin ? ('login ' + tanggal(r.Akun.LastLogin,'pendek')) : 'belum pernah login' }}
+                      · <a href="#" @click.prevent="resetSandi(r)">Reset</a>
+                    </div>
+                  </template>
+                  <span v-else class="badge warn">Belum ada akun</span>
                 </td>
                 <td class="fs-sm">
                   <template v-if="r.NomorKamar">{{ r.NamaGedung }}<div class="txt-3 fs-xs">Kamar {{ r.NomorKamar }} · Lt {{ r.Lantai }}</div></template>
                   <span v-else class="badge warn">Belum ditempatkan</span>
                 </td>
                 <td>
-                  <span class="badge" :class="r.EligibleKartu ? 'ok' : ''">
-                    {{ r.EligibleKartu ? 'Aktif (3x)' : (r.IncludeMakan ? 'Belum disetujui' : 'Non-katering') }}
+                  <span class="badge" :class="r.EligibleKartu ? (r.AdaFoto ? 'ok' : 'warn') : ''">
+                    {{ r.EligibleKartu ? (r.AdaFoto ? 'Aktif (3x)' : 'Aktif · perlu foto') : (r.IncludeMakan ? 'Belum disetujui' : 'Non-katering') }}
                   </span>
                 </td>
                 <td style="min-width:130px">
@@ -390,7 +496,7 @@ window.VIEWS['penghuni'] = {
           </table>
         </div>
         <div class="tbl-foot">
-          <span>Menampilkan {{ (halaman-1)*perHal + 1 }}–{{ Math.min(halaman*perHal, rows.length) }} dari {{ angka(rows.length) }} santri</span>
+          <span>Menampilkan {{ (halaman-1)*perHal + 1 }}–{{ Math.min(halaman*perHal, tersaring.length) }} dari {{ angka(tersaring.length) }} mahasiswa</span>
           <div class="pager">
             <button :disabled="halaman === 1" @click="halaman--">‹</button>
             <button v-for="h in Math.min(halTotal, 5)" :key="h" :class="{active: halaman === h}" @click="halaman = h">{{ h }}</button>
@@ -399,7 +505,7 @@ window.VIEWS['penghuni'] = {
           </div>
         </div>
       </template>
-      <sa-empty v-else judul="Belum ada penghuni" pesan="Terima pendaftar atau tambahkan penghuni manual."></sa-empty>
+      <sa-empty v-else judul="Tidak ada penghuni" pesan="Tidak ada data pada filter / kata kunci ini."></sa-empty>
     </div>
 
     <!-- PANEL DETAIL -->
@@ -408,19 +514,35 @@ window.VIEWS['penghuni'] = {
       <sa-loading v-if="!detailData" teks="Memuat profil…"></sa-loading>
       <template v-else>
         <div class="flex items-center gap-md mb-md flex-wrap">
-          <sa-avatar :nama="detail.NamaLengkap" :foto="detailData.penghuni.FotoURL" ukuran="lg"></sa-avatar>
+          <span :class="{'tanpa-foto': !detail.AdaFoto}"><sa-avatar :nama="detail.NamaLengkap" :foto="detailData.penghuni.FotoURL" ukuran="lg"></sa-avatar></span>
           <div class="flex-1">
             <div class="flex gap-sm flex-wrap">
               <sa-badge :teks="detailData.penghuni.Status"></sa-badge>
               <span class="badge info plain">{{ detailData.paket.NamaPaket || '-' }}</span>
               <span class="badge plain" :class="kelasSkor(detailData.penghuni.Skor)">Skor {{ detailData.penghuni.Skor }}/100</span>
             </div>
+            <button v-if="bolehKelola" class="btn xs secondary mt-sm" @click="unggahFoto = !unggahFoto">📷 {{ detail.AdaFoto ? 'Ganti foto profil' : 'Unggah foto profil (wajib)' }}</button>
           </div>
           <div class="btn-row">
             <a class="btn sm secondary" :href="waLink(detailData.penghuni.NoHP)" target="_blank">💬 WhatsApp</a>
             <button class="btn sm danger" v-if="bolehKelola && detailData.penghuni.Status === 'Aktif'"
                     @click="checkout(detail)">Checkout</button>
           </div>
+        </div>
+
+        <div v-if="unggahFoto" class="mb-md">
+          <sa-foto-upload v-model="fotoGanti" :nama="detail.NamaLengkap" :foto-lama="detailData.penghuni.FotoURL"></sa-foto-upload>
+          <div class="text-right mt-sm"><button class="btn sm" :disabled="!fotoGanti || proses" @click="simpanFoto">
+            <span v-if="proses" class="spin"></span>Simpan Foto</button></div>
+        </div>
+
+        <div v-if="isSA && akunDetail" class="info-box mb-md" style="align-items:center">
+          <span>🔐</span>
+          <div class="flex-1 fs-sm">Akun login · <b>{{ akunDetail.Username }}</b> ·
+            sandi: <code>{{ akunDetail.SandiAwal ? (lihatSandi[detail.PenghuniID] ? akunDetail.SandiAwal : '••••••••') : 'sudah diganti mahasiswa' }}</code>
+            <button v-if="akunDetail.SandiAwal" class="icon-btn" @click="toggleSandi(detail.PenghuniID)">{{ lihatSandi[detail.PenghuniID] ? '🙈' : '👁' }}</button>
+            · {{ akunDetail.Status }} · {{ akunDetail.LastLogin ? 'login ' + tanggal(akunDetail.LastLogin,'jam') : 'belum pernah login' }}</div>
+          <button class="btn xs danger" @click="resetSandi(detail)">Reset Sandi</button>
         </div>
 
         <div class="grid grid-2 gap-md">
@@ -455,20 +577,21 @@ window.VIEWS['penghuni'] = {
             <div class="tl-desc">Skor {{ s.SkorLama }} → {{ s.SkorBaru }}</div>
           </div>
         </div>
-        <p v-else class="fs-sm txt-3">Belum ada perubahan skor — santri berstatus bersih.</p>
+        <p v-else class="fs-sm txt-3">Belum ada perubahan skor — mahasiswa berstatus bersih.</p>
       </template>
       <template #aksi><button class="btn secondary" @click="detail = null">Tutup</button></template>
     </sa-modal>
 
     <!-- MODAL TAMBAH -->
-    <sa-modal v-if="tambah" judul="Tambah Penghuni Manual" sub="Gunakan untuk santri yang tidak melalui formulir pendaftaran."
+    <sa-modal v-if="tambah" judul="Tambah Penghuni Manual" sub="Untuk mahasiswa yang tidak melalui formulir pendaftaran. Foto profil wajib."
               ikon="➕" @tutup="tambah = false">
+      <sa-foto-upload v-model="fotoBaru" :nama="baru.NamaLengkap" class="mb-md"></sa-foto-upload>
       <div class="grid grid-2 gap-md">
         <div class="field"><label class="label">Nama Lengkap <span class="req">*</span></label>
           <input class="input" v-model.trim="baru.NamaLengkap"></div>
-        <div class="field"><label class="label">NIM</label><input class="input" v-model.trim="baru.NIM"></div>
-        <div class="field"><label class="label">Email</label><input class="input" v-model.trim="baru.Email"></div>
-        <div class="field"><label class="label">No. HP</label><input class="input" v-model.trim="baru.NoHP"></div>
+        <div class="field"><label class="label">NIM <span class="txt-3 fs-xs">(jadi username)</span></label><input class="input" v-model.trim="baru.NIM"></div>
+        <div class="field"><label class="label">Email</label><input class="input" type="email" v-model.trim="baru.Email"></div>
+        <div class="field"><label class="label">No. HP / WhatsApp</label><input class="input" inputmode="tel" v-model.trim="baru.NoHP" placeholder="08xxxxxxxxxx"></div>
         <div class="field"><label class="label">Jenis Kelamin <span class="req">*</span></label>
           <select class="select" v-model="baru.JenisKelamin">
             <option value="">— Pilih —</option><option value="L">Laki-laki</option><option value="P">Perempuan</option>
@@ -489,9 +612,10 @@ window.VIEWS['penghuni'] = {
             <option v-for="a in (ref ? ref.angkatan : [])" :key="a.MasterID" :value="a.Nilai">{{ a.Nilai }}</option>
           </select></div>
       </div>
+      <label class="check mt-sm"><input type="checkbox" v-model="kirimAkun"> Kirim info akses akun (username &amp; sandi) via WhatsApp/Email</label>
       <template #aksi>
         <button class="btn secondary" @click="tambah = false">Batal</button>
-        <button class="btn" :disabled="proses" @click="simpanBaru"><span v-if="proses" class="spin"></span>Simpan Penghuni</button>
+        <button class="btn" :disabled="proses || !fotoBaru" @click="simpanBaru"><span v-if="proses" class="spin"></span>Simpan Penghuni</button>
       </template>
     </sa-modal>
   </div>`
@@ -544,7 +668,7 @@ window.VIEWS['penempatan'] = {
   },
   methods: {
     muat: async function () {
-      this.memuat = true;
+      this.memuat = !APP._latar;
       var res = await callApi('rooms.board', {});
       this.memuat = false;
       if (res.ok) {
@@ -588,7 +712,7 @@ window.VIEWS['penempatan'] = {
     },
     keluarkan: async function (p, k) {
       var ya = await konfirmasi('Keluarkan ' + p.NamaLengkap + ' dari kamar ' + k.NomorKamar + '?',
-        'Santri akan kembali ke antrean penempatan.', 'Ya, keluarkan', true);
+        'Mahasiswa akan kembali ke antrean penempatan.', 'Ya, keluarkan', true);
       if (!ya) return;
       var self = this;
       await optimistic(function () {
@@ -608,9 +732,9 @@ window.VIEWS['penempatan'] = {
       var self = this;
       this.d.kamar.forEach(function (k) {
         var g = self.d.gedung.filter(function (x) { return x.GedungID === k.GedungID; })[0] || {};
-        if (!k.penghuni.length) rows.push({ Gedung: g.NamaGedung, Kamar: k.NomorKamar, Lantai: k.Lantai, Kapasitas: k.Kapasitas, Terisi: 0, Santri: '-', NIM: '-' });
+        if (!k.penghuni.length) rows.push({ Gedung: g.NamaGedung, Kamar: k.NomorKamar, Lantai: k.Lantai, Kapasitas: k.Kapasitas, Terisi: 0, Mahasiswa: '-', NIM: '-' });
         else k.penghuni.forEach(function (p) {
-          rows.push({ Gedung: g.NamaGedung, Kamar: k.NomorKamar, Lantai: k.Lantai, Kapasitas: k.Kapasitas, Terisi: k.terisi, Santri: p.NamaLengkap, NIM: p.NIM });
+          rows.push({ Gedung: g.NamaGedung, Kamar: k.NomorKamar, Lantai: k.Lantai, Kapasitas: k.Kapasitas, Terisi: k.terisi, Mahasiswa: p.NamaLengkap, NIM: p.NIM });
         });
       });
       unduhExcel(rows, 'Okupansi_Kamar', 'Okupansi');
@@ -619,11 +743,11 @@ window.VIEWS['penempatan'] = {
   template: `
   <div>
     <sa-page judul="Papan Alokasi &amp; Penempatan Kamar"
-             sub="Pilih santri di antrean, lalu klik kamar tujuan. Validasi gender dan kapasitas berjalan otomatis."
+             sub="Pilih mahasiswa di antrean, lalu klik kamar tujuan. Validasi gender dan kapasitas berjalan otomatis."
              :jalur="['Operasional Asrama','Penempatan Kamar']">
       <template #aksi>
         <button class="btn secondary" @click="ekspor">⬇ Ekspor Okupansi</button>
-        <button class="btn secondary" @click="muat">↻ Segarkan</button>
+        <button class="btn secondary" @click="segarkan(muat)">↻ Segarkan</button>
       </template>
     </sa-page>
 
@@ -637,7 +761,7 @@ window.VIEWS['penempatan'] = {
         <sa-kpi label="Bed Kosong Tersedia" :nilai="statGedung.kosong" ikon="🟦"
                 catatan="Siap huni gelombang baru"></sa-kpi>
         <sa-kpi label="Antrean Penempatan" :nilai="d.antrean.length" ikon="⏳" warna="warn"
-                catatan="Santri belum berkamar"></sa-kpi>
+                catatan="Mahasiswa belum berkamar"></sa-kpi>
       </div>
 
       <div class="grid grid-32">
@@ -645,7 +769,7 @@ window.VIEWS['penempatan'] = {
         <div class="card">
           <div class="card-head">
             <div class="t">
-              <div class="card-title">Antrean Santri</div>
+              <div class="card-title">Antrean Mahasiswa</div>
               <div class="card-sub">Siap ditempatkan ke kamar</div>
             </div>
             <span class="badge info">{{ antrean.length }} Menunggu</span>
@@ -675,7 +799,7 @@ window.VIEWS['penempatan'] = {
               </div>
             </div>
             <sa-empty v-if="!antrean.length" judul="Antrean kosong"
-                      pesan="Semua santri aktif sudah memiliki kamar." ikon="🎉"></sa-empty>
+                      pesan="Semua mahasiswa aktif sudah memiliki kamar." ikon="🎉"></sa-empty>
           </div>
         </div>
 
@@ -771,7 +895,7 @@ window.VIEWS['penempatan'] = {
           </div>
         </div>
         <div class="info-box warn" v-if="!konfirmasi.genderCocok">
-          <span>⚠️</span><div>Gender santri tidak sesuai tipe gedung. Server akan menolak penempatan ini (BR-7).</div>
+          <span>⚠️</span><div>Gender mahasiswa tidak sesuai tipe gedung. Server akan menolak penempatan ini (BR-7).</div>
         </div>
 
         <template #aksi>
@@ -791,7 +915,7 @@ window.VIEWS['penempatan'] = {
         </div>
         <div class="table-wrap" v-if="isiKamar.penghuni.length">
           <table class="tbl">
-            <thead><tr><th>Bed</th><th>Santri</th><th>Paket</th><th>Skor</th><th>Kontak</th><th></th></tr></thead>
+            <thead><tr><th>Bed</th><th>Mahasiswa</th><th>Paket</th><th>Skor</th><th>Kontak</th><th></th></tr></thead>
             <tbody>
               <tr v-for="(p,i) in isiKamar.penghuni" :key="p.PenghuniID">
                 <td class="mono">B.0{{ i+1 }}</td>
@@ -809,7 +933,7 @@ window.VIEWS['penempatan'] = {
             </tbody>
           </table>
         </div>
-        <sa-empty v-else judul="Kamar masih kosong" pesan="Pilih santri di antrean lalu klik kamar ini."></sa-empty>
+        <sa-empty v-else judul="Kamar masih kosong" pesan="Pilih mahasiswa di antrean lalu klik kamar ini."></sa-empty>
         <template #aksi><button class="btn secondary" @click="isiKamar = null">Tutup</button></template>
       </sa-modal>
     </template>
@@ -834,10 +958,11 @@ window.VIEWS['gedung-kamar'] = {
   },
   methods: {
     muat: async function () {
-      this.memuat = true;
-      var a = await callApi('crud.list', { tabel: 'Gedung' });
-      var b = await callApi('crud.list', { tabel: 'Kamar' });
-      var c = await callApi('crud.list', { tabel: 'Paket' });
+      this.memuat = !APP._latar;
+      // v6.2: paralel (digabung otomatis jadi 1 batch ke server)
+      var hasil = await Promise.all([callApi('crud.list', { tabel: 'Gedung' }), callApi('crud.list', { tabel: 'Kamar' }),
+                                     callApi('crud.list', { tabel: 'Paket' })]);
+      var a = hasil[0], b = hasil[1], c = hasil[2];
       this.memuat = false;
       if (a.ok) this.gedung = a.data;
       if (b.ok) this.kamar = b.data;
@@ -1013,7 +1138,7 @@ window.VIEWS['gedung-kamar'] = {
         </div>
         <div class="field"><label class="label">Deskripsi</label><textarea class="input" v-model="form.Deskripsi"></textarea></div>
         <label class="check"><input type="checkbox" v-model="form.IncludeMakan">
-          <span>Termasuk katering 3x sehari (santri otomatis berhak kartu makan QR)</span></label>
+          <span>Termasuk katering 3x sehari (mahasiswa otomatis berhak kartu makan QR)</span></label>
       </template>
 
       <template #aksi>
@@ -1043,7 +1168,7 @@ window.VIEWS['tagihan'] = {
   },
   methods: {
     muat: async function () {
-      this.memuat = true;
+      this.memuat = !APP._latar;
       var res = await callApi('billing.list', this.f);
       this.memuat = false;
       if (res.ok) { this.rows = res.data.rows; this.ringkasan = res.data.ringkasan; }
@@ -1066,7 +1191,7 @@ window.VIEWS['tagihan'] = {
     },
     terbitkan: async function (semua) {
       var jml = semua ? this.eligible.rows.length : this.terpilih.length;
-      if (!jml) { toast('Pilih minimal satu santri.', 'warning'); return; }
+      if (!jml) { toast('Pilih minimal satu mahasiswa.', 'warning'); return; }
       var ya = await konfirmasi('Terbitkan ' + jml + ' tagihan?',
         'Periode ' + periodeLabel(this.periodeBaru) + '. Penerbitan bersifat idempotent — tidak akan dobel.', 'Ya, terbitkan');
       if (!ya) return;
@@ -1095,7 +1220,7 @@ window.VIEWS['tagihan'] = {
   template: `
   <div>
     <sa-page judul="Manajemen Tagihan &amp; Pembayaran Asrama"
-             sub="Kelola penagihan berkala, verifikasi bukti transfer, dan penerbitan faktur massal mahasantri."
+             sub="Kelola penagihan berkala, verifikasi bukti transfer, dan penerbitan faktur massal mahasiswa."
              :jalur="['Operasional Asrama','Tagihan &amp; Pembayaran']">
       <template #aksi>
         <button class="btn secondary" @click="ekspor">⬇ Ekspor Rekap Keuangan</button>
@@ -1123,7 +1248,7 @@ window.VIEWS['tagihan'] = {
     <!-- TAB DAFTAR -->
     <div class="card" v-if="tab==='daftar'">
       <div class="filters">
-        <input class="input flex-1" v-model="f.cari" @input="muat" placeholder="🔍 Cari invoice, NIM, atau nama santri…" style="min-width:240px">
+        <input class="input flex-1" v-model="f.cari" @input="muat" placeholder="🔍 Cari invoice, NIM, atau nama mahasiswa…" style="min-width:240px">
         <select class="select" v-model="f.status" @change="muat">
           <option value="">Semua status</option>
           <option>Belum Bayar</option><option>Menunggu Verifikasi</option><option>Lunas</option>
@@ -1134,7 +1259,7 @@ window.VIEWS['tagihan'] = {
       <sa-loading v-if="memuat"></sa-loading>
       <div class="table-wrap" v-else-if="rows.length">
         <table class="tbl">
-          <thead><tr><th>No. Invoice &amp; Tgl</th><th>Mahasantri &amp; Kamar</th><th>Paket Hunian</th>
+          <thead><tr><th>No. Invoice &amp; Tgl</th><th>Mahasiswa &amp; Kamar</th><th>Paket Hunian</th>
             <th>Periode</th><th class="num">Nominal</th><th>Status</th></tr></thead>
           <tbody>
             <tr v-for="t in rows.slice(0,100)" :key="t.TagihanID">
@@ -1169,7 +1294,7 @@ window.VIEWS['tagihan'] = {
       </div></div>
       <div class="table-wrap" v-if="pending.length">
         <table class="tbl">
-          <thead><tr><th>Santri</th><th>Invoice &amp; Periode</th><th class="num">Nominal Ditransfer</th>
+          <thead><tr><th>Mahasiswa</th><th>Invoice &amp; Periode</th><th class="num">Nominal Ditransfer</th>
             <th class="num">Nilai Tagihan</th><th>Metode</th><th>Bukti</th><th>Tindakan</th></tr></thead>
           <tbody>
             <tr v-for="b in pending" :key="b.PembayaranID">
@@ -1192,26 +1317,26 @@ window.VIEWS['tagihan'] = {
     <div class="card" v-else>
       <div class="card-head"><div class="t">
         <div class="card-title">Generator Penagihan Massal</div>
-        <div class="card-sub">Penerbitan bersifat idempotent — santri yang sudah ditagih pada periode ini otomatis dilewati (BR-3).</div>
+        <div class="card-sub">Penerbitan bersifat idempotent — mahasiswa yang sudah ditagih pada periode ini otomatis dilewati (BR-3).</div>
       </div></div>
       <div class="filters">
         <input class="input" type="month" v-model="periodeBaru" @change="muatEligible" style="min-width:180px">
-        <button class="btn sm secondary" @click="muatEligible">↻ Muat ulang daftar</button>
+        <button class="btn sm secondary" @click="segarkan(muatEligible)">↻ Muat ulang daftar</button>
       </div>
 
       <template v-if="eligible">
         <div class="panel-dark mb-md">
           <div class="it"><small>Periode target</small><b>{{ periodeLabel(eligible.periode) }}</b></div>
-          <div class="it"><small>Santri belum ditagih</small><b>{{ eligible.rows.length }} mahasantri</b></div>
+          <div class="it"><small>Mahasiswa belum ditagih</small><b>{{ eligible.rows.length }} mahasiswa</b></div>
           <div class="it"><small>Estimasi nilai faktur</small><b>{{ rupiah(eligible.estimasi) }}</b></div>
-          <div class="it"><small>Dipilih</small><b>{{ terpilih.length }} santri</b></div>
+          <div class="it"><small>Dipilih</small><b>{{ terpilih.length }} mahasiswa</b></div>
         </div>
 
         <div class="table-wrap" v-if="eligible.rows.length">
           <table class="tbl">
             <thead><tr>
               <th style="width:40px"><input type="checkbox" @change="pilihSemua"></th>
-              <th>Santri</th><th>Kamar</th><th>Paket</th><th class="num">Nominal</th>
+              <th>Mahasiswa</th><th>Kamar</th><th>Paket</th><th class="num">Nominal</th>
             </tr></thead>
             <tbody>
               <tr v-for="r in eligible.rows" :key="r.PenghuniID" :class="{sel: terpilih.indexOf(r.PenghuniID) > -1}">
@@ -1224,7 +1349,7 @@ window.VIEWS['tagihan'] = {
             </tbody>
           </table>
         </div>
-        <sa-empty v-else judul="Semua santri sudah ditagih"
+        <sa-empty v-else judul="Semua mahasiswa sudah ditagih"
                   :pesan="'Tidak ada tagihan baru untuk periode ' + periodeLabel(eligible.periode) + '.'" ikon="✅"></sa-empty>
 
         <div class="btn-row mt-md" v-if="eligible.rows.length">
@@ -1249,7 +1374,7 @@ window.VIEWS['tagihan'] = {
       <sa-kv k="Tanggal bayar" :v="tanggal(verif.TanggalBayar,'pendek')"></sa-kv>
       <div class="info-box mt-md" v-if="Number(verif.Jumlah) > Number(verif.NominalTagihan)">
         <span>ℹ️</span><div>Terdapat kelebihan bayar {{ rupiah(Number(verif.Jumlah) - Number(verif.NominalTagihan)) }} —
-        akan dicatat sebagai saldo deposit santri (BR-6).</div>
+        akan dicatat sebagai saldo deposit mahasiswa (BR-6).</div>
       </div>
       <div class="mt-md" v-if="verif.BuktiURL">
         <sa-thumb :src="verif.BuktiThumb" :href="verif.BuktiURL" judul="🔍 Bukti transfer — klik untuk ukuran penuh" tinggi="220"></sa-thumb>
@@ -1278,7 +1403,7 @@ window.VIEWS['tagihan-saya'] = {
   mounted: function () { this.muat(); },
   methods: {
     muat: async function () {
-      this.memuat = true;
+      this.memuat = !APP._latar;
       var res = await callApi('billing.mine', {});
       this.memuat = false;
       if (res.ok) this.d = res.data;
@@ -1291,8 +1416,7 @@ window.VIEWS['tagihan-saya'] = {
     pilihBerkas: async function (ev) {
       var f = ev.target.files[0];
       if (!f) return;
-      if (f.size > (/^image\//.test(f.type) ? 15 : 2) * 1024 * 1024) { toast('Maksimal 2 MB (PDF) / 15 MB (foto).', 'warning'); return; }
-      this.berkas = await bacaBerkas(f);   // foto otomatis dikompres + dibuat thumbnail
+      try { this.berkas = await bacaBerkas(f); } catch (e) { ev.target.value = ''; return; }   // foto dikompres ≤ batas unggahan
     },
     kirim: async function () {
       if (!this.berkas) { toast('Unggah bukti transfer terlebih dahulu.', 'warning'); return; }
@@ -1366,7 +1490,7 @@ window.VIEWS['tagihan-saya'] = {
         <div class="field"><label class="label">No. Referensi</label>
           <input class="input" v-model="form.noReferensi" placeholder="Nomor referensi mutasi"></div>
       </div>
-      <div class="field"><label class="label">Berkas Bukti (maks 2 MB)</label>
+      <div class="field"><label class="label">Berkas Bukti (maks {{ labelBatasUnggah() }})</label>
         <input type="file" class="input" accept="image/*,.pdf" @change="pilihBerkas" style="padding:8px">
         <div class="hint" v-if="berkas">✅ {{ berkas.nama }}</div></div>
       <template #aksi>
@@ -1389,7 +1513,7 @@ window.VIEWS['helpdesk'] = {
   },
   methods: {
     muat: async function () {
-      this.memuat = true;
+      this.memuat = !APP._latar;
       var res = await callApi('helpdesk.list', {});
       this.memuat = false;
       if (res.ok) this.rows = res.data;
@@ -1404,10 +1528,10 @@ window.VIEWS['helpdesk'] = {
   },
   template: `
   <div>
-    <sa-page judul="Helpdesk &amp; Pengaduan Santri"
-             sub="Tanggapi keluhan fasilitas, kebersihan, keamanan, dan katering dari mahasantri."
+    <sa-page judul="Helpdesk &amp; Pengaduan Mahasiswa"
+             sub="Tanggapi keluhan fasilitas, kebersihan, keamanan, dan katering dari mahasiswa."
              :jalur="['Operasional Asrama','Helpdesk']">
-      <template #aksi><button class="btn secondary" @click="muat">↻ Segarkan</button></template>
+      <template #aksi><button class="btn secondary" @click="segarkan(muat)">↻ Segarkan</button></template>
     </sa-page>
 
     <div class="card">
@@ -1461,7 +1585,7 @@ window.VIEWS['helpdesk'] = {
 
       <div class="grid grid-2 gap-md mt-md">
         <div class="field"><label class="label">Balasan</label>
-          <textarea class="input" v-model="pesan" placeholder="Tulis tanggapan untuk santri…"></textarea></div>
+          <textarea class="input" v-model="pesan" placeholder="Tulis tanggapan untuk mahasiswa…"></textarea></div>
         <div class="field"><label class="label">Ubah Status</label>
           <select class="select" v-model="statusBaru">
             <option>Baru</option><option>Diproses</option><option>Selesai</option><option>Ditolak</option>
@@ -1488,21 +1612,22 @@ window.VIEWS['helpdesk-saya'] = {
     return { d: null, memuat: true, ref: null, buat: false,
              f: { kategori: '', judul: '', deskripsi: '', prioritas: 'Normal' }, berkas: null, proses: false, detail: null };
   },
-  mounted: async function () {
-    var r = await callCached('meta.ref', {});
-    if (r.ok) this.ref = r.data;
+  mounted: function () {
+    var self = this;
+    // v6.2: referensi & data dimuat PARALEL (digabung jadi 1 batch)
+    callCached('meta.ref', {}).then(function (r) { if (r.ok) self.ref = r.data; });
     this.muat();
   },
   methods: {
     muat: async function () {
-      this.memuat = true;
+      this.memuat = !APP._latar;
       var res = await callApi('helpdesk.mine', {});
       this.memuat = false;
       if (res.ok) this.d = res.data;
     },
     pilihBerkas: async function (ev) {
       var f = ev.target.files[0];
-      if (f) this.berkas = await bacaBerkas(f);
+      if (f) { try { this.berkas = await bacaBerkas(f); } catch (e) { this.berkas = null; } }
     },
     kirim: async function () {
       if (!this.f.judul || !this.f.deskripsi) { toast('Judul dan deskripsi wajib diisi.', 'warning'); return; }
@@ -1574,7 +1699,7 @@ window.VIEWS['helpdesk-saya'] = {
         <input class="input" v-model="f.judul" placeholder="mis. AC kamar tidak dingin"></div>
       <div class="field"><label class="label">Deskripsi <span class="req">*</span></label>
         <textarea class="input" v-model="f.deskripsi" placeholder="Jelaskan kronologi dan dampaknya…"></textarea></div>
-      <div class="field"><label class="label">Lampiran (opsional, maks 2 MB)</label>
+      <div class="field"><label class="label">Lampiran (opsional, maks {{ labelBatasUnggah() }})</label>
         <input type="file" class="input" accept="image/*,.pdf" @change="pilihBerkas" style="padding:8px">
         <div class="hint" v-if="berkas">✅ {{ berkas.nama }}</div></div>
       <template #aksi>

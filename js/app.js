@@ -1,5 +1,5 @@
 /* ==========================================================================
- * SIM ASRAMA v6.1 — SHELL APLIKASI (Vue 3 SPA)
+ * SIM ASRAMA v6.2 — SHELL APLIKASI (Vue 3 SPA)
  * Navigasi client-side 0 ms (gas-instant-ux prinsip 1): seluruh view dimuat
  * sekali, perpindahan menu hanya mengganti komponen — tanpa reload halaman.
  * ========================================================================== */
@@ -10,7 +10,7 @@
 var MENU = [
   { grup: 'Utama', items: [
     { id: 'dashboard',        label: 'Dashboard',              ikon: '▦', role: ['SA','PMB','KEU','PA','PI','PIM'] },
-    { id: 'dashboard-penghuni', label: 'Beranda Santri',       ikon: '▦', role: ['PNG'] }
+    { id: 'dashboard-penghuni', label: 'Beranda Mahasiswa',    ikon: '▦', role: ['PNG'] }
   ]},
   { grup: 'Operasional Asrama', items: [
     { id: 'pendaftar',        label: 'Verifikasi Pendaftar',   ikon: '📝', role: ['SA','PMB','PA','PI','PIM'] },
@@ -22,7 +22,8 @@ var MENU = [
   ]},
   { grup: 'Pengasuhan &amp; Kedisiplinan', items: [
     { id: 'disiplin',         label: 'Laporan Kedisiplinan',   ikon: '🛡', role: ['SA','PA','PI','PIM'] },
-    { id: 'sp-bap',           label: 'Penerbitan SP &amp; BAP',   ikon: '⚖️', role: ['SA','PA','PI'] }
+    { id: 'sp-bap',           label: 'Penerbitan SP &amp; BAP',   ikon: '⚖️', role: ['SA','PA','PI'] },
+    { id: 'template-surat',   label: 'Template &amp; Arsip Surat', ikon: '📄', role: ['SA','PA','PI','PIM'] }
   ]},
   { grup: 'Modul Kartu &amp; Makan', items: [
     { id: 'scanner',          label: 'Scanner QR Kartu Makan', ikon: '⬚', role: ['SA','PA','PI','PTG'] },
@@ -50,17 +51,19 @@ var MENU = [
   { grup: 'Pendukung', items: [
     { id: 'arsip',            label: 'Arsip &amp; Pengumuman',    ikon: '📁', role: ['SA','PMB','KEU','PA','PI','PIM','PNG'] },
     { id: 'notifikasi-wa',    label: 'WhatsApp &amp; Notifikasi', ikon: '💬', role: ['SA','PMB','KEU','PA','PI'] },
+    { id: 'crm',              label: 'CRM Kontak (WA &amp; Email)', ikon: '📇', role: ['SA','PMB','KEU','PA','PI','PIM'] },
     { id: 'profil',           label: 'Profil &amp; Kata Sandi',   ikon: '🔑', role: ['SA','PMB','KEU','PA','PI','PIM','PNG','PTG'] }
   ]}
 ];
 
-var ROUTE_PUBLIK = ['login', 'daftar', 'status-daftar'];
+var ROUTE_PUBLIK = ['login', 'daftar', 'status-daftar', 'verifikasi'];
 
 var ROOT = {
   data: function () {
     return {
       user: null, route: 'login', sidebar: false, notif: { rows: [], belumDibaca: 0 },
-      notifBuka: false, tema: 'light', cariGlobal: '', siap: false, pengVer: 0
+      notifBuka: false, tema: 'light', cariGlobal: '', siap: false, pengVer: 0,
+      verifikasiPublik: false, kodeVerifikasi: ''
     };
   },
   computed: {
@@ -93,7 +96,7 @@ var ROOT = {
       this.route = this.rutaAwal();
       this.segarkanSesi();
     } else {
-      pemanasanServer();
+      pemanasanServer('pub');
     }
     // Tema tersimpan per perangkat (pengaturan tampilan, bukan data)
     try {
@@ -101,9 +104,15 @@ var ROOT = {
       if (t) { this.tema = t; document.documentElement.setAttribute('data-theme', t); }
     } catch (e) {}
     this.siap = true;
-    // Deep link sederhana: index.html#daftar
+    // Deep link sederhana: index.html#daftar · #verifikasi=KODE (QR surat — tetap publik walau sedang login)
     var hash = String(location.hash || '').replace('#', '');
-    if (!this.user && ROUTE_PUBLIK.indexOf(hash) > -1) this.route = hash;
+    if (hash.indexOf('verifikasi') === 0) { this.kodeVerifikasi = hash.split('=')[1] || ''; this.verifikasiPublik = true; }
+    else if (!this.user && ROUTE_PUBLIK.indexOf(hash) > -1) this.route = hash;
+    var self = this;
+    window.addEventListener('hashchange', function () {
+      var h = String(location.hash || '').replace('#', '');
+      if (h.indexOf('verifikasi') === 0) { self.kodeVerifikasi = h.split('=')[1] || ''; self.verifikasiPublik = false; self.$nextTick(function () { self.verifikasiPublik = true; }); }
+    });
   },
   methods: {
     rutaAwal: function () {
@@ -120,6 +129,8 @@ var ROOT = {
       if (boot && boot.notif) this.notif = boot.notif; else this.muatNotif();
       if (!boot || !boot.pengaturan) this.muatPengaturan();
       this.mulaiPolling();
+      prefetchMenu();                                   // v6.2: menu utama sudah ada di cache saat diklik
+      if (['SA','PMB','KEU','PA','PI','PIM'].indexOf(user.Role) > -1) pemanasanServer('admin');
       if (['SA','PMB','KEU','PA','PI','PIM'].indexOf(user.Role) > -1) pramuatPustaka(['chart', 'xlsx']);
       if (user.harusGantiSandi) {
         setTimeout(function () {
@@ -150,7 +161,21 @@ var ROOT = {
       simpanPengaturanLokal(res.data.pengaturan);
       this.notif = res.data.notif;
       this.mulaiPolling();
+      prefetchMenu();
       if (['SA','PMB','KEU','PA','PI','PIM'].indexOf(u.Role) > -1) pramuatPustaka(['chart', 'xlsx']);
+    },
+    tutupVerifikasi: function () {
+      this.verifikasiPublik = false;
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { location.hash = ''; }
+    },
+    /** v6.2: data di latar berubah → muat ulang tampilan aktif TANPA skeleton */
+    segarkanView: function () {
+      var v = this.$refs.view;
+      if (!v) return;
+      var fn = v.segarkanLatar || v.muat;
+      if (typeof fn !== 'function') return;
+      APP._latar = true;
+      try { fn.call(v); } catch (e) { console.warn(e); } finally { APP._latar = false; }
     },
     mulaiPolling: function () {
       var self = this;
@@ -159,6 +184,7 @@ var ROOT = {
       this._poll = setInterval(function () { if (!document.hidden && self.user) self.muatNotif(); }, 120000);
     },
     pindah: function (id) {
+      turboPindahRute();
       this.route = id;
       this.sidebar = false;
       this.notifBuka = false;
@@ -202,6 +228,9 @@ var ROOT = {
   template: `
   <div v-if="!siap"></div>
 
+  <!-- ===================== VERIFIKASI SURAT (publik, dari QR) ===================== -->
+  <view-verifikasi v-else-if="verifikasiPublik" :kode="kodeVerifikasi" @tutup="tutupVerifikasi"></view-verifikasi>
+
   <!-- ===================== HALAMAN PUBLIK ===================== -->
   <component v-else-if="!user" :is="'view-' + route" @masuk="masuk" @pindah="pindah"></component>
 
@@ -227,7 +256,7 @@ var ROOT = {
         <div class="sys-status">
           <span class="dot"></span>
           <div><b style="display:block;color:#fff">Koneksi Sistem</b>
-            <span style="color:#8FB0D6">Online Sync · Schema v52</span></div>
+            <span style="color:#8FB0D6">Online Sync · Schema v53 · Turbo</span></div>
         </div>
       </div>
     </aside>
@@ -279,7 +308,7 @@ var ROOT = {
       <div v-if="notifBuka" class="backdrop-click" style="z-index:50" @click="notifBuka = false"></div>
 
       <main class="content">
-        <component :is="'view-' + route" :user="user" @pindah="pindah" @masuk="masuk"></component>
+        <component :is="'view-' + route" ref="view" :user="user" @pindah="pindah" @masuk="masuk"></component>
       </main>
     </div>
   </div>`
@@ -315,6 +344,9 @@ var ROOT = {
   g.kelasStatus = kelasStatus; g.inisial = inisial; g.potong = potong; g.waLink = waLink;
   g.qrImgTag = qrImgTag; g.unduhExcel = unduhExcel; g.toast = toast; g.konfirmasi = konfirmasi;
   g.ukuranBaca = ukuranBaca; g.normalHp = normalHp;
+  g.labelBatasUnggah = labelBatasUnggah; g.batasUnggahKB = batasUnggahKB;
+  // v6.2: tombol "↻ Segarkan" → abaikan cache browser & server untuk panggilan ini
+  g.segarkan = function (fn) { APP._paksa = true; try { return fn(); } finally { APP._paksa = false; } };
   g.cetak = function () { window.print(); };
   g.callApi = callApi; g.optimistic = optimistic; g.bersihkanCache = bersihkanCache;
   g.CONFIG = CONFIG; g.APP = APP; g.PALET = PALET;
