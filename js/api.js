@@ -1,5 +1,5 @@
 /* ==========================================================================
- * SIM ASRAMA v6.2 — LAPISAN API & UTILITAS
+ * SIM ASRAMA v7.0 — LAPISAN API & UTILITAS
  * --------------------------------------------------------------------------
  * • callApi()  : satu pintu ke backend GAS (fetch POST, text/plain)
  * • v6.2 TURBO (gas-scale-turbo + gas-instant-ux-pro):
@@ -10,6 +10,9 @@
  *     - Batas waktu + coba ulang otomatis (3×) saat Google sibuk / jaringan putus
  *     - reqId pada aksi tulis → aman diulang, tidak ada data ganda
  *     - Prefetch menu utama di waktu senggang · Perf.table() di console
+ * • v7.0 SUPABASE: aksi BACA dilayani langsung dari database Supabase
+ *     (js/supabase-baca.js, dibatasi RLS) — bila gagal otomatis lewat Apps Script.
+ *     Semua aksi TULIS tetap lewat Apps Script.
  * • Optimistic : optimistic() — UI berubah 0 ms, rollback otomatis bila gagal
  * • Util       : format rupiah/tanggal, QR code, PDF kartu, ekspor .xlsx
  * ========================================================================== */
@@ -105,7 +108,26 @@ function callApi(action, payload, opt) {
   opt = opt || {};
   payload = payload || {};
   if (TURBO_BACA[action] && !opt.tanpaCache) return bacaTurbo(action, payload, opt);
+  if ((TURBO_BACA[action] || BACA_LAIN[action]) && bisaLangsung(action, payload)) {
+    return bacaLangsung(action, payload, opt, function () { return kirimApi(action, payload, opt); });
+  }
   return kirimApi(action, payload, opt);
+}
+
+/* ---- v7.0: baca langsung dari Supabase (RLS) — cadangan otomatis: Apps Script ---- */
+function bisaLangsung(action, payload) {
+  try { return !!(window.SBB && window.SBB.bisa(action, payload)); } catch (e) { return false; }
+}
+function bacaLangsung(action, payload, opt, cadangan) {
+  var t0 = performance.now();
+  return window.SBB.baca(action, payload).then(function (res) {
+    Perf.catat(action, Math.round(performance.now() - t0), 0, 'supabase');
+    if (res && !res.ok && !opt.diam) toast(res.error || 'Permintaan gagal.', 'error');
+    return res;
+  }, function (e) {
+    try { console.warn('[Supabase] ' + action + ' dibaca lewat Apps Script: ' + (e && e.message)); } catch (x) {}
+    return cadangan();
+  });
 }
 
 function bacaTurbo(action, payload, opt) {
@@ -158,6 +180,13 @@ function turboPindahRute() { TURBO.kunciView = {}; }
 /* ---- Gabung otomatis (batch) permintaan baca yang muncul bersamaan ---- */
 var _antreBaca = [], _tBaca = null;
 function antreBaca(action, payload, opt) {
+  if (bisaLangsung(action, payload)) {
+    return bacaLangsung(action, payload, opt, function () { return antreBacaGas(action, payload, opt); });
+  }
+  return antreBacaGas(action, payload, opt);
+}
+
+function antreBacaGas(action, payload, opt) {
   if (!APP.token || opt.sendiri) return kirimApi(action, payload, opt);
   return new Promise(function (resolve) {
     _antreBaca.push({ action: action, payload: payload, opt: opt, resolve: resolve });
@@ -401,6 +430,7 @@ function muatSesi() {
 
 function hapusSesi() {
   APP.token = null; APP.user = null; APP.cache = {};
+  try { if (window.SBB && window.SBB.reset) window.SBB.reset(); } catch (e) {}
   TURBO.mem = {}; TURBO.terbang = {}; TURBO.kunciView = {}; TURBO.epoch++;
   try {
     localStorage.removeItem('asr_sesi');

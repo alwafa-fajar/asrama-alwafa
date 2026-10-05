@@ -311,11 +311,11 @@ window.VIEWS['backup'] = {
     jalankan: async function () {
       if (!this.label.trim()) { toast('Label backup wajib diisi (BR-35).', 'warning'); return; }
       var ya = await konfirmasi('Jalankan backup sekarang?',
-        'Seluruh spreadsheet akan diduplikasi ke folder arsip Drive. Data produksi tidak akan berubah.', 'Ya, backup sekarang');
+        'Seluruh tabel database Supabase akan diekspor ke 1 spreadsheet di folder arsip Drive. Data produksi tidak akan berubah.', 'Ya, backup sekarang');
       if (!ya) return;
       this.proses = true;
       Swal.fire({ title: 'Sedang memproses backup…',
-        html: 'Menduplikasi seluruh sheet ke Google Drive.<br><b>Jangan tutup halaman ini.</b>',
+        html: 'Mengekspor seluruh tabel database ke Google Drive.<br><b>Jangan tutup halaman ini.</b>',
         allowOutsideClick: false, didOpen: function () { Swal.showLoading(); } });
       var res = await callApi('backup.run', { label: this.label.trim() });
       this.proses = false;
@@ -326,7 +326,7 @@ window.VIEWS['backup'] = {
   template: `
   <div>
     <sa-page judul="Backup &amp; Cadangan Data Sistem"
-             sub="Duplikasi penuh seluruh database spreadsheet &amp; konfigurasi ke folder arsip Google Drive tanpa gangguan layanan live."
+             sub="Ekspor penuh seluruh tabel database Supabase ke spreadsheet di folder arsip Google Drive tanpa gangguan layanan live."
              :jalur="['Super Admin','Backup &amp; Cadangan Data']">
       <template #aksi>
         <span class="badge danger">🔒 SA-ONLY</span>
@@ -337,15 +337,15 @@ window.VIEWS['backup'] = {
     <sa-loading v-if="memuat"></sa-loading>
     <template v-else-if="d">
       <div class="grid grid-4 mb-md">
-        <sa-kpi label="Database Master Aktif" :nilai="d.jumlahSheet" satuan="sheet" ikon="🗃" warna="ok"
+        <sa-kpi label="Database Master Aktif" :nilai="d.jumlahSheet" satuan="tabel" ikon="🗃" warna="ok"
                 catatan="Terhubung &amp; normal"></sa-kpi>
         <sa-kpi label="Total Cadangan Arsip" :nilai="d.total" satuan="arsip" ikon="📦"
                 catatan="Tersimpan di Google Drive"></sa-kpi>
         <sa-kpi label="Backup Terakhir" :nilai="d.terakhir ? tanggal(d.terakhir.Tanggal,'pendek') : '—'" ikon="🕐"
                 :catatan="d.terakhir ? d.terakhir.Label : 'Belum pernah backup'"
                 :warna="d.terakhir ? 'ok' : 'warn'"></sa-kpi>
-        <sa-kpi label="Metode Replikasi" nilai="makeCopy()" ikon="⚡"
-                catatan="Drive API native · zero-downtime"></sa-kpi>
+        <sa-kpi label="Metode Replikasi" nilai="Ekspor tabel" ikon="⚡"
+                catatan="Supabase → Google Sheets · zero-downtime"></sa-kpi>
       </div>
 
       <!-- PROTOKOL -->
@@ -356,11 +356,11 @@ window.VIEWS['backup'] = {
         </div>
         <div class="grid grid-3 gap-md">
           <div class="info-box"><span>📑</span><div><b>Protokol 1: Duplikasi Total</b><br>
-            Menyalin seluruh sheet termasuk arsip LogMakan terpartisi bulanan beserta formula, tanpa menghentikan sistem aktif.</div></div>
+            Mengekspor seluruh tabel (termasuk log makan) ke 1 spreadsheet — 1 sheet per tabel — tanpa menghentikan sistem aktif.</div></div>
           <div class="info-box"><span>✏️</span><div><b>Protokol 2: Penamaan Terstandar</b><br>
             Format kanonikal <span class="mono">Backup_SIM_Asrama_[Label]_[Timestamp]</span> guna menjaga auditabilitas.</div></div>
           <div class="info-box"><span>↩️</span><div><b>Protokol 3: Restorasi Terkendali</b><br>
-            Pemulihan dilakukan manual oleh SA melalui penyesuaian SPREADSHEET_ID atau penyalinan selektif cell-level.</div></div>
+            Pemulihan dilakukan manual oleh SA: berkas backup dimuat ulang ke Supabase dengan migrasiSheetsKeSupabase() (upsert, tidak dobel).</div></div>
         </div>
       </div>
 
@@ -390,13 +390,13 @@ window.VIEWS['backup'] = {
 
           <label class="check mb-md"><input type="checkbox" v-model="verifikasi">
             <span><b>Verifikasi integritas setelah duplikasi</b><br>
-            <span class="fs-xs txt-2">Membandingkan jumlah sheet dan ukuran berkas hasil salinan (disarankan).</span></span></label>
+            <span class="fs-xs txt-2">Membandingkan jumlah tabel dan baris hasil ekspor (disarankan).</span></span></label>
 
           <button class="btn dark block lg" :disabled="proses" @click="jalankan">
             <span v-if="proses" class="spin"></span>⚡ Jalankan Backup Sekarang
             <span class="badge plain" style="background:rgba(255,255,255,.18);color:#fff;margin-left:8px">ZERO-DOWNTIME</span>
           </button>
-          <p class="fs-xs txt-2 mt-sm">✅ Proses tidak akan mengganggu mahasiswa yang sedang bertransaksi atau memindai kartu makan di dapur (atomic spreadsheet snapshot).</p>
+          <p class="fs-xs txt-2 mt-sm">✅ Proses tidak akan mengganggu mahasiswa yang sedang bertransaksi atau memindai kartu makan di dapur (ekspor baca-saja dari database).</p>
         </div>
 
         <!-- PANDUAN PEMULIHAN -->
@@ -415,8 +415,8 @@ window.VIEWS['backup'] = {
               <div class="tl-desc">Validasi baris master mahasiswa, status kamar, riwayat transaksi katering, dan log audit.</div>
             </div>
             <div class="tl-item">
-              <div class="tl-title">3. Perbarui SPREADSHEET_ID &amp; jalankan setup()</div>
-              <div class="tl-desc">Ganti Script Property <span class="mono">SPREADSHEET_ID</span> di Apps Script agar menunjuk berkas salinan, lalu jalankan <span class="mono">setup()</span> untuk sinkronisasi skema.</div>
+              <div class="tl-title">3. Isi SUMBER_SPREADSHEET_ID &amp; jalankan migrasiSheetsKeSupabase()</div>
+              <div class="tl-desc">Di Apps Script → Script Properties isi <span class="mono">SUMBER_SPREADSHEET_ID</span> dengan ID berkas backup, jalankan <span class="mono">resetStatusMigrasi()</span> lalu <span class="mono">migrasiSheetsKeSupabase()</span> sampai selesai. Hapus property itu setelahnya.</div>
             </div>
           </div>
           <div class="info-box warn mt-md"><span>⚠️</span><div>Sistem <b>tidak menghapus backup lama otomatis</b> (BR-37).
@@ -456,8 +456,8 @@ window.VIEWS['backup'] = {
     </template>
 
     <sa-modal v-if="hasil" judul="Backup Berhasil Dibuat" :sub="hasil.nama" ikon="✅" @tutup="hasil = null">
-      <div class="info-box ok"><span>🎉</span><div>Seluruh <b>{{ hasil.jumlahSheet }} sheet</b> berhasil diduplikasi
-        ke folder arsip Drive ({{ hasil.ukuranMB }} MB).</div></div>
+      <div class="info-box ok"><span>🎉</span><div>Seluruh <b>{{ hasil.jumlahSheet }} tabel</b> berhasil diekspor
+        ke folder arsip Drive (database {{ hasil.ukuranMB }} MB).</div></div>
       <sa-kv k="Backup ID" :v="hasil.backupId"></sa-kv>
       <sa-kv k="File ID" :v="hasil.fileId"></sa-kv>
       <template #aksi>
