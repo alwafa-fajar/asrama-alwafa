@@ -622,3 +622,9 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
 .seg button{border:0;background:transparent;padding:6px 12px;cursor:pointer;font-size:13px}
 .seg button.on{background:var(--blue,#2563EB);color:#fff}
 .notif-grup{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3,#94A3B8);padding:10px 8px 4px}
+
+/* v7.1 — pilih bulan tagihan (centang beberapa bulan sekaligus) */
+.bulan-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
+.bulan-grid .chip{justify-content:center;width:100%;padding:7px 6px;cursor:pointer;font-family:inherit}
+.bulan-grid .chip:hover{border-color:var(--blue)}
+@media (max-width:640px){.bulan-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}

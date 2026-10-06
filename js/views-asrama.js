@@ -1223,13 +1223,39 @@ window.VIEWS['tagihan'] = {
     return {
       tab: 'daftar', rows: [], ringkasan: {}, memuat: true,
       f: { periode: '', status: '', cari: '' },
-      pending: [], eligible: null, terpilih: [], periodeBaru: '', proses: false, verif: null, catatan: ''
+      pending: [], eligible: null, terpilih: [], periodeBaru: '', proses: false, verif: null, catatan: '',
+      // v7.1: tagihan beberapa bulan sekaligus — bulan dicentang bebas (lintas tahun)
+      bulanDipilih: [], tahunTampil: new Date().getFullYear(), tundaMuat: null
     };
   },
   mounted: function () {
     var d = new Date();
     this.periodeBaru = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
+    this.bulanDipilih = [this.periodeBaru];
     this.muat();
+  },
+  computed: {
+    /** v7.1: bukti yang mencakup beberapa bulan (GrupBayar sama) ditampilkan sebagai 1 transaksi */
+    pendingGrup: function () {
+      var peta = {}, urut = [];
+      this.pending.forEach(function (b) {
+        var k = b.GrupBayar || b.PembayaranID;
+        if (!peta[k]) { peta[k] = Object.assign({}, b, { anggota: [], Jumlah: 0, NominalTagihan: 0 }); urut.push(k); }
+        var g = peta[k];
+        g.anggota.push(b);
+        g.Jumlah += Number(b.Jumlah) || 0;
+        g.NominalTagihan += Number(b.NominalTagihan) || 0;
+      });
+      return urut.map(function (k) {
+        var g = peta[k];
+        g.anggota.sort(function (a, b) { return String(a.Periode).localeCompare(String(b.Periode)); });
+        g.PembayaranID = g.anggota[0].PembayaranID;
+        return g;
+      });
+    },
+    labelBulanDipilih: function () {
+      return this.bulanDipilih.map(function (p) { return periodeLabel(p); }).join(', ');
+    }
   },
   methods: {
     muat: async function () {
@@ -1243,8 +1269,37 @@ window.VIEWS['tagihan'] = {
       if (res.ok) this.pending = res.data;
     },
     muatEligible: async function () {
-      var res = await callApi('billing.eligible', { periode: this.periodeBaru });
+      if (!this.bulanDipilih.length) { this.eligible = { periode: '', periodeList: [], rows: [], estimasi: 0 }; this.terpilih = []; return; }
+      var res = await callApi('billing.eligible', { periodeList: this.bulanDipilih.slice() });
       if (res.ok) { this.eligible = res.data; this.terpilih = []; }
+    },
+    /* ---- v7.1: pemilih bulan ---- */
+    kodeBulan: function (th, b) { return th + '-' + ('0' + b).slice(-2); },
+    bulanAktif: function (per) { return this.bulanDipilih.indexOf(per) > -1; },
+    toggleBulan: function (per) {
+      var i = this.bulanDipilih.indexOf(per);
+      if (i > -1) this.bulanDipilih.splice(i, 1); else this.bulanDipilih.push(per);
+      this.bulanDipilih.sort();
+      this.jadwalEligible();
+    },
+    pilihBerurutan: function (n) {
+      var d = new Date(), out = [];
+      for (var i = 0; i < n; i++) {
+        var x = new Date(d.getFullYear(), d.getMonth() + i, 1);
+        out.push(x.getFullYear() + '-' + ('0' + (x.getMonth() + 1)).slice(-2));
+      }
+      this.bulanDipilih = out;
+      this.jadwalEligible();
+    },
+    kosongkanBulan: function () { this.bulanDipilih = []; this.jadwalEligible(); },
+    jadwalEligible: function () {
+      var vm = this;
+      clearTimeout(this.tundaMuat);
+      this.tundaMuat = setTimeout(function () { vm.muatEligible(); }, 350);
+    },
+    namaBulan: function (b) { return BULAN_ID[b - 1] || ''; },
+    singkatBulan: function (daftar) {
+      return (daftar || []).map(function (p) { var x = String(p && p.Periode !== undefined ? p.Periode : p).split('-'); return (BULAN_ID[Number(x[1]) - 1] || '').substring(0, 3) + ' ' + x[0].slice(-2); }).join(', ');
     },
     gantiTab: function (t) {
       this.tab = t;
@@ -1256,13 +1311,18 @@ window.VIEWS['tagihan'] = {
     },
     terbitkan: async function (semua) {
       var jml = semua ? this.eligible.rows.length : this.terpilih.length;
+      if (!this.bulanDipilih.length) { toast('Centang minimal satu bulan tagihan.', 'warning'); return; }
       if (!jml) { toast('Pilih minimal satu mahasiswa.', 'warning'); return; }
-      var ya = await konfirmasi('Terbitkan ' + jml + ' tagihan?',
-        'Periode ' + periodeLabel(this.periodeBaru) + '. Penerbitan bersifat idempotent — tidak akan dobel.', 'Ya, terbitkan');
+      var dipilih = this.terpilih, rows = this.eligible.rows.filter(function (r) { return semua || dipilih.indexOf(r.PenghuniID) > -1; });
+      var nTagihan = rows.reduce(function (s, r) { return s + r.bulanBaru.length; }, 0);
+      var nilai = rows.reduce(function (s, r) { return s + r.Total; }, 0);
+      var ya = await konfirmasi('Terbitkan ' + nTagihan + ' tagihan untuk ' + jml + ' mahasiswa?',
+        this.bulanDipilih.length + ' bulan: ' + this.labelBulanDipilih + ' · total ' + rupiah(nilai) +
+        '. Mahasiswa bisa membayar per bulan atau beberapa bulan sekaligus. Bulan yang sudah ditagih otomatis dilewati (tidak dobel).', 'Ya, terbitkan');
       if (!ya) return;
       this.proses = true;
       var res = await callApi(semua ? 'billing.genBatch' : 'billing.genForSelected',
-        { periode: this.periodeBaru, penghuniIds: this.terpilih });
+        { periodeList: this.bulanDipilih.slice(), penghuniIds: this.terpilih });
       this.proses = false;
       if (res.ok) { toast(res.message, 'success'); bersihkanCache(); this.muatEligible(); this.muat(); }
     },
@@ -1357,14 +1417,16 @@ window.VIEWS['tagihan'] = {
         <div class="card-title">Pemeriksaan &amp; Validasi Bukti Pembayaran</div>
         <div class="card-sub">Verifikasi visual struk mutasi bank syariah dengan data tagihan sistem.</div>
       </div></div>
-      <div class="table-wrap" v-if="pending.length">
+      <div class="table-wrap" v-if="pendingGrup.length">
         <table class="tbl">
           <thead><tr><th>Mahasiswa</th><th>Invoice &amp; Periode</th><th class="num">Nominal Ditransfer</th>
             <th class="num">Nilai Tagihan</th><th>Metode</th><th>Bukti</th><th>Tindakan</th></tr></thead>
           <tbody>
-            <tr v-for="b in pending" :key="b.PembayaranID">
+            <tr v-for="b in pendingGrup" :key="b.PembayaranID">
               <td><b>{{ b.NamaLengkap }}</b><div class="mono fs-xs txt-3">{{ b.NIM }}</div></td>
-              <td><span class="mono">{{ b.TagihanID }}</span><div class="fs-xs txt-3">{{ periodeLabel(b.Periode) }}</div></td>
+              <td v-if="b.anggota.length === 1"><span class="mono">{{ b.TagihanID }}</span><div class="fs-xs txt-3">{{ periodeLabel(b.Periode) }}</div></td>
+              <td v-else><span class="badge info">{{ b.anggota.length }} bulan · 1 bukti</span>
+                <div class="fs-xs txt-3 mt-sm">{{ singkatBulan(b.anggota) }}</div></td>
               <td class="num fw6 txt-ok">{{ rupiah(b.Jumlah) }}</td>
               <td class="num">{{ rupiah(b.NominalTagihan) }}</td>
               <td class="fs-sm">{{ b.Metode }}<div class="fs-xs txt-3">{{ b.NoReferensi }}</div></td>
@@ -1382,16 +1444,34 @@ window.VIEWS['tagihan'] = {
     <div class="card" v-else>
       <div class="card-head"><div class="t">
         <div class="card-title">Generator Penagihan Massal</div>
-        <div class="card-sub">Penerbitan bersifat idempotent — mahasiswa yang sudah ditagih pada periode ini otomatis dilewati (BR-3).</div>
+        <div class="card-sub">Centang bulan apa saja yang ditagihkan (boleh beberapa bulan sekaligus). Mahasiswa bisa membayar per bulan
+          atau beberapa bulan sekaligus dengan 1 bukti; pengingat H-3/H-0 tetap dikirim tiap bulan hanya untuk yang belum bayar.
+          Bulan yang sudah ditagih otomatis dilewati (BR-3).</div>
       </div></div>
       <div class="filters">
-        <input class="input" type="month" v-model="periodeBaru" @change="muatEligible" style="min-width:180px">
+        <div class="pills">
+          <button @click="tahunTampil--" title="Tahun sebelumnya">‹</button>
+          <button class="active" style="cursor:default">{{ tahunTampil }}</button>
+          <button @click="tahunTampil++" title="Tahun berikutnya">›</button>
+        </div>
+        <button class="btn sm secondary" @click="pilihBerurutan(1)">Bulan ini</button>
+        <button class="btn sm secondary" @click="pilihBerurutan(5)">5 bulan ke depan</button>
+        <button class="btn sm secondary" @click="pilihBerurutan(6)">6 bulan</button>
+        <button class="btn sm ghost" @click="kosongkanBulan">Kosongkan</button>
         <button class="btn sm secondary" @click="segarkan(muatEligible)">↻ Muat ulang daftar</button>
       </div>
+      <div class="bulan-grid mb-sm">
+        <button v-for="b in 12" :key="b" type="button" class="chip" :class="{active: bulanAktif(kodeBulan(tahunTampil, b))}"
+                @click="toggleBulan(kodeBulan(tahunTampil, b))">
+          {{ bulanAktif(kodeBulan(tahunTampil, b)) ? '✓ ' : '' }}{{ namaBulan(b) }}
+        </button>
+      </div>
+      <p class="fs-xs txt-2 mb-md" v-if="bulanDipilih.length"><b>{{ bulanDipilih.length }} bulan dipilih:</b> {{ labelBulanDipilih }}</p>
+      <p class="fs-xs txt-3 mb-md" v-else>Belum ada bulan dipilih — centang minimal satu bulan.</p>
 
       <template v-if="eligible">
         <div class="panel-dark mb-md">
-          <div class="it"><small>Periode target</small><b>{{ periodeLabel(eligible.periode) }}</b></div>
+          <div class="it"><small>Bulan ditagih</small><b>{{ bulanDipilih.length }} bulan</b></div>
           <div class="it"><small>Mahasiswa belum ditagih</small><b>{{ eligible.rows.length }} mahasiswa</b></div>
           <div class="it"><small>Estimasi nilai faktur</small><b>{{ rupiah(eligible.estimasi) }}</b></div>
           <div class="it"><small>Dipilih</small><b>{{ terpilih.length }} mahasiswa</b></div>
@@ -1401,7 +1481,7 @@ window.VIEWS['tagihan'] = {
           <table class="tbl">
             <thead><tr>
               <th style="width:40px"><input type="checkbox" @change="pilihSemua"></th>
-              <th>Mahasiswa</th><th>Kamar</th><th>Paket</th><th class="num">Nominal</th>
+              <th>Mahasiswa</th><th>Kamar</th><th>Paket</th><th>Bulan Ditagih</th><th class="num">Nominal</th>
             </tr></thead>
             <tbody>
               <tr v-for="r in eligible.rows" :key="r.PenghuniID" :class="{sel: terpilih.indexOf(r.PenghuniID) > -1}">
@@ -1409,13 +1489,14 @@ window.VIEWS['tagihan'] = {
                 <td><b>{{ r.NamaLengkap }}</b><div class="mono fs-xs txt-3">{{ r.NIM }}</div></td>
                 <td class="fs-sm">{{ r.NomorKamar }}</td>
                 <td class="fs-sm">{{ r.NamaPaket }}</td>
-                <td class="num">{{ rupiah(r.Harga) }}</td>
+                <td class="fs-sm"><b>{{ r.bulanBaru.length }} bulan</b><div class="fs-xs txt-3">{{ singkatBulan(r.bulanBaru) }}</div></td>
+                <td class="num">{{ rupiah(r.Total) }}<div class="fs-xs txt-3" v-if="r.bulanBaru.length > 1">{{ rupiah(r.Harga) }}/bulan</div></td>
               </tr>
             </tbody>
           </table>
         </div>
         <sa-empty v-else judul="Semua mahasiswa sudah ditagih"
-                  :pesan="'Tidak ada tagihan baru untuk periode ' + periodeLabel(eligible.periode) + '.'" ikon="✅"></sa-empty>
+                  :pesan="bulanDipilih.length ? 'Tidak ada tagihan baru untuk ' + labelBulanDipilih + '.' : 'Centang bulan yang akan ditagihkan.'" ikon="✅"></sa-empty>
 
         <div class="btn-row mt-md" v-if="eligible.rows.length">
           <button class="btn secondary" :disabled="proses || !terpilih.length" @click="terbitkan(false)">
@@ -1431,8 +1512,21 @@ window.VIEWS['tagihan'] = {
 
     <!-- MODAL VERIFIKASI -->
     <sa-modal v-if="verif" judul="Verifikasi Bukti Pembayaran"
-              :sub="verif.NamaLengkap + ' · ' + verif.TagihanID" ikon="🧾" @tutup="verif = null">
-      <sa-kv k="Periode" :v="periodeLabel(verif.Periode)"></sa-kv>
+              :sub="verif.NamaLengkap + ' · ' + (verif.anggota && verif.anggota.length > 1 ? verif.anggota.length + ' bulan dalam 1 bukti' : verif.TagihanID)"
+              ikon="🧾" @tutup="verif = null">
+      <template v-if="verif.anggota && verif.anggota.length > 1">
+        <div class="info-box mb-md"><span>🗓</span><div>Satu bukti transfer untuk <b>{{ verif.anggota.length }} bulan</b>.
+          Verifikasi/penolakan berlaku untuk semua bulan di bawah ini sekaligus.</div></div>
+        <div class="table-wrap mb-md">
+          <table class="tbl">
+            <thead><tr><th>Periode</th><th>Invoice</th><th class="num">Nilai Tagihan</th></tr></thead>
+            <tbody><tr v-for="a in verif.anggota" :key="a.PembayaranID">
+              <td>{{ periodeLabel(a.Periode) }}</td><td class="mono fs-sm">{{ a.TagihanID }}</td>
+              <td class="num">{{ rupiah(a.NominalTagihan) }}</td></tr></tbody>
+          </table>
+        </div>
+      </template>
+      <sa-kv v-else k="Periode" :v="periodeLabel(verif.Periode)"></sa-kv>
       <sa-kv k="Nilai tagihan" :v="rupiah(verif.NominalTagihan)"></sa-kv>
       <sa-kv k="Nominal ditransfer" :v="rupiah(verif.Jumlah)"></sa-kv>
       <sa-kv k="Metode / referensi" :v="verif.Metode + ' · ' + (verif.NoReferensi || '-')"></sa-kv>
@@ -1452,7 +1546,7 @@ window.VIEWS['tagihan'] = {
         <button class="btn ghost" @click="verif = null">Batal</button>
         <button class="btn danger" :disabled="proses" @click="verifikasi('tolak')">⛔ Tolak Bukti</button>
         <button class="btn ok" :disabled="proses" @click="verifikasi('terima')">
-          <span v-if="proses" class="spin"></span>✔ Verifikasi &amp; Tandai Lunas
+          <span v-if="proses" class="spin"></span>✔ Verifikasi{{ verif.anggota && verif.anggota.length > 1 ? ' ' + verif.anggota.length + ' Bulan' : '' }} &amp; Tandai Lunas
         </button>
       </template>
     </sa-modal>
@@ -1464,19 +1558,47 @@ window.VIEWS['tagihan'] = {
  * ======================================================================= */
 window.VIEWS['tagihan-saya'] = {
   props: ['user'],
-  data: function () { return { d: null, memuat: true, bayar: null, form: {}, berkas: null, proses: false }; },
+  data: function () { return { d: null, memuat: true, bayar: null, form: {}, berkas: null, proses: false, pilih: [] }; },
   mounted: function () { this.muat(); },
+  computed: {
+    /** v7.1: tagihan yang bisa dibayar (boleh beberapa bulan sekaligus dengan 1 bukti) */
+    bisaBayar: function () {
+      return this.d ? this.d.tagihan.filter(function (t) { return t.Status === 'Belum Bayar' || t.Status === 'Terlambat'; }) : [];
+    },
+    totalPilih: function () {
+      var p = this.pilih;
+      return this.bisaBayar.filter(function (t) { return p.indexOf(t.TagihanID) > -1; })
+        .reduce(function (s, t) { return s + (Number(t.Jumlah) || 0); }, 0);
+    },
+    totalBayar: function () {
+      return (this.bayar || []).reduce(function (s, t) { return s + (Number(t.Jumlah) || 0); }, 0);
+    }
+  },
   methods: {
     muat: async function () {
       this.memuat = !APP._latar;
       var res = await callApi('billing.mine', {});
       this.memuat = false;
-      if (res.ok) this.d = res.data;
+      if (res.ok) {
+        this.d = res.data;
+        var ada = this.bisaBayar.map(function (t) { return t.TagihanID; });
+        this.pilih = this.pilih.filter(function (id) { return ada.indexOf(id) > -1; });
+      }
     },
-    bukaBayar: function (t) {
-      this.bayar = t;
-      this.form = { jumlah: t.Jumlah, metode: 'Transfer', noReferensi: '', tanggalBayar: new Date().toISOString().substring(0, 10) };
+    bisa: function (t) { return t.Status === 'Belum Bayar' || t.Status === 'Terlambat'; },
+    pilihSemua: function (ev) { this.pilih = ev.target.checked ? this.bisaBayar.map(function (t) { return t.TagihanID; }) : []; },
+    /** daftar: 1 tagihan (tombol per baris) atau beberapa bulan yang dicentang */
+    bukaBayar: function (daftar) {
+      daftar = [].concat(daftar || []).slice().sort(function (a, b) { return String(a.Periode).localeCompare(String(b.Periode)); });
+      if (!daftar.length) { toast('Centang minimal satu bulan yang akan dibayar.', 'warning'); return; }
+      this.bayar = daftar;
+      var total = daftar.reduce(function (s, t) { return s + (Number(t.Jumlah) || 0); }, 0);
+      this.form = { jumlah: total, metode: 'Transfer', noReferensi: '', tanggalBayar: new Date().toISOString().substring(0, 10) };
       this.berkas = null;
+    },
+    bayarTerpilih: function () {
+      var p = this.pilih;
+      this.bukaBayar(this.bisaBayar.filter(function (t) { return p.indexOf(t.TagihanID) > -1; }));
     },
     pilihBerkas: async function (ev) {
       var f = ev.target.files[0];
@@ -1485,12 +1607,13 @@ window.VIEWS['tagihan-saya'] = {
     },
     kirim: async function () {
       if (!this.berkas) { toast('Unggah bukti transfer terlebih dahulu.', 'warning'); return; }
+      if (Number(this.form.jumlah) < this.totalBayar) { toast('Nominal transfer kurang dari total ' + rupiah(this.totalBayar) + '.', 'warning'); return; }
       this.proses = true;
       var res = await callApi('billing.submitProof', Object.assign({
-        tagihanId: this.bayar.TagihanID, bukti: this.berkas
+        tagihanIds: this.bayar.map(function (t) { return t.TagihanID; }), bukti: this.berkas
       }, this.form));
       this.proses = false;
-      if (res.ok) { toast(res.message, 'success'); this.bayar = null; this.muat(); }
+      if (res.ok) { toast(res.message, 'success'); this.bayar = null; this.pilih = []; this.muat(); }
     }
   },
   template: `
@@ -1508,25 +1631,36 @@ window.VIEWS['tagihan-saya'] = {
         <div class="card" style="margin:0">
           <div class="card-title">Rekening Tujuan</div>
           <p class="fs-sm txt-2 mt-sm">{{ d.rekening || 'Belum diatur oleh admin.' }}</p>
-          <div class="info-box mt-md"><span>ℹ️</span><div>Unggah bukti transfer setelah membayar. Bendahara akan memverifikasi maksimal 1×24 jam.</div></div>
+          <div class="info-box mt-md"><span>ℹ️</span><div>Bayar per bulan atau beberapa bulan sekaligus: centang bulan yang dibayar,
+            lalu unggah <b>1 bukti transfer</b>. Bendahara akan memverifikasi maksimal 1×24 jam.</div></div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-head"><div class="t"><div class="card-title">Riwayat Tagihan</div></div></div>
+        <div class="card-head">
+          <div class="t"><div class="card-title">Riwayat Tagihan</div>
+            <div class="card-sub" v-if="bisaBayar.length">{{ bisaBayar.length }} bulan belum dibayar — centang bulan yang ingin dibayar sekaligus.</div></div>
+          <button v-if="bisaBayar.length" class="btn" :disabled="!pilih.length" @click="bayarTerpilih">
+            💳 Bayar {{ pilih.length || '' }} Bulan Terpilih<span v-if="pilih.length"> · {{ rupiah(totalPilih) }}</span>
+          </button>
+        </div>
         <div class="table-wrap" v-if="d.tagihan.length">
           <table class="tbl">
-            <thead><tr><th>Invoice</th><th>Periode</th><th class="num">Nominal</th><th>Jatuh Tempo</th>
+            <thead><tr>
+              <th style="width:40px"><input v-if="bisaBayar.length" type="checkbox" title="Pilih semua yang belum dibayar"
+                     :checked="pilih.length && pilih.length === bisaBayar.length" @change="pilihSemua"></th>
+              <th>Invoice</th><th>Periode</th><th class="num">Nominal</th><th>Jatuh Tempo</th>
               <th>Status</th><th>Tindakan</th></tr></thead>
             <tbody>
-              <tr v-for="t in d.tagihan" :key="t.TagihanID">
+              <tr v-for="t in d.tagihan" :key="t.TagihanID" :class="{sel: pilih.indexOf(t.TagihanID) > -1}">
+                <td><input v-if="bisa(t)" type="checkbox" :value="t.TagihanID" v-model="pilih"></td>
                 <td class="mono">{{ t.TagihanID }}</td>
                 <td>{{ periodeLabel(t.Periode) }}</td>
                 <td class="num fw6">{{ rupiah(t.Jumlah) }}</td>
                 <td class="fs-sm">{{ tanggal(t.JatuhTempo,'pendek') }}</td>
                 <td><sa-badge :teks="t.Status"></sa-badge></td>
                 <td>
-                  <button v-if="t.Status === 'Belum Bayar' || t.Status === 'Terlambat'" class="btn xs" @click="bukaBayar(t)">
+                  <button v-if="bisa(t)" class="btn xs" @click="bukaBayar([t])">
                     Unggah Bukti
                   </button>
                   <span v-else class="fs-xs txt-3">—</span>
@@ -1539,13 +1673,25 @@ window.VIEWS['tagihan-saya'] = {
       </div>
     </template>
 
-    <sa-modal v-if="bayar" judul="Unggah Bukti Pembayaran" :sub="bayar.TagihanID + ' · ' + periodeLabel(bayar.Periode)"
+    <sa-modal v-if="bayar" judul="Unggah Bukti Pembayaran"
+              :sub="bayar.length === 1 ? bayar[0].TagihanID + ' · ' + periodeLabel(bayar[0].Periode) : bayar.length + ' bulan · 1 bukti transfer'"
               ikon="🧾" @tutup="bayar = null">
-      <div class="info-box mb-md"><span>🏦</span><div>Transfer ke <b>{{ d.rekening }}</b> sejumlah <b>{{ rupiah(bayar.Jumlah) }}</b></div></div>
+      <div class="info-box mb-md"><span>🏦</span><div>Transfer ke <b>{{ d.rekening }}</b> sejumlah <b>{{ rupiah(totalBayar) }}</b>
+        <span v-if="bayar.length > 1"> untuk {{ bayar.length }} bulan</span></div></div>
+      <div class="table-wrap mb-md" v-if="bayar.length > 1">
+        <table class="tbl">
+          <thead><tr><th>Bulan yang dibayar</th><th>Invoice</th><th class="num">Nominal</th></tr></thead>
+          <tbody>
+            <tr v-for="t in bayar" :key="t.TagihanID"><td>{{ periodeLabel(t.Periode) }}</td>
+              <td class="mono fs-sm">{{ t.TagihanID }}</td><td class="num">{{ rupiah(t.Jumlah) }}</td></tr>
+            <tr><td colspan="2"><b>Total</b></td><td class="num fw6">{{ rupiah(totalBayar) }}</td></tr>
+          </tbody>
+        </table>
+      </div>
       <div class="grid grid-2 gap-md">
         <div class="field"><label class="label">Nominal Ditransfer</label>
           <input type="number" class="input" v-model="form.jumlah">
-          <div class="hint">Tidak boleh kurang dari nilai tagihan.</div></div>
+          <div class="hint">Tidak boleh kurang dari {{ bayar.length > 1 ? 'total tagihan terpilih' : 'nilai tagihan' }}.</div></div>
         <div class="field"><label class="label">Tanggal Transfer</label>
           <input type="date" class="input" v-model="form.tanggalBayar"></div>
         <div class="field"><label class="label">Metode</label>
@@ -1557,7 +1703,8 @@ window.VIEWS['tagihan-saya'] = {
       </div>
       <div class="field"><label class="label">Berkas Bukti (maks {{ labelBatasUnggah() }})</label>
         <input type="file" class="input" accept="image/*,.pdf" @change="pilihBerkas" style="padding:8px">
-        <div class="hint" v-if="berkas">✅ {{ berkas.nama }}</div></div>
+        <div class="hint" v-if="berkas">✅ {{ berkas.nama }}</div>
+        <div class="hint" v-else-if="bayar.length > 1">Cukup 1 bukti transfer untuk semua bulan di atas.</div></div>
       <template #aksi>
         <button class="btn secondary" @click="bayar = null">Batal</button>
         <button class="btn" :disabled="proses" @click="kirim"><span v-if="proses" class="spin"></span>Kirim Bukti</button>

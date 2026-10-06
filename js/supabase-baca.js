@@ -28,7 +28,7 @@
 
   /* ---------------- runtime mini Apps Script (hanya yang dipakai fungsi baca) ---------------- */
   var CONFIG = {"SESSION_HOURS":12,"CACHE_TTL":300,"CACHE_MAX_KB":1800,"MAX_UPLOAD_MB":1,"MAX_UPLOAD_KB":1024,"THUMB_PX":320,"MIGRASI_CHUNK":4000,"IMPORT_BATCH":200,"TIMEZONE":"Asia/Jakarta"};
-  var SB_COLS = {"Users":["UserID","Username","Email","NamaLengkap","Role","PasswordHash","Status","PenghuniID","JenisKelamin","SandiAwal","NoHP","CreatedBy","CreatedAt","GoogleSub","FotoGoogle","LastLogin"],"MasterData":["MasterID","Tipe","Kode","Nilai","Induk","Poin","Urutan","Status"],"Pendaftar":["PendaftarID","UserID","NIM","NamaLengkap","Email","NoHP","JenisKelamin","ProgramKelas","Prodi","Angkatan","BeratBadan","Alamat","NamaWali","NoHPWali","PaketID","BayarAwal","BulanDibayar","FotoID","SuratID","BuktiID","Status","Catatan","TanggalDaftar","VerifiedBy","VerifiedAt","FotoThumbID","StatusWA","CekWAAt"],"Penghuni":["PenghuniID","PendaftarID","UserID","NIM","NamaLengkap","Email","NoHP","JenisKelamin","ProgramKelas","Prodi","Angkatan","BeratBadan","KamarID","PaketID","Skor","Status","TanggalMasuk","TanggalKeluar","FotoID","EligibleKartu","KartuApprovedBy","KartuApprovedAt","NamaWali","NoHPWali","FotoThumbID","StatusWA","CekWAAt"],"Gedung":["GedungID","NamaGedung","Tipe","JumlahLantai","Musyrif","NoHPMusyrif","Status"],"Kamar":["KamarID","GedungID","NomorKamar","Lantai","Kapasitas","Fasilitas","Status","Catatan"],"Penempatan":["PenempatanID","PenghuniID","KamarID","NomorBed","TanggalMasuk","TanggalKeluar","Status","DitempatkanOleh"],"Paket":["PaketID","NamaPaket","Harga","Deskripsi","Status","IncludeMakan"],"Tagihan":["TagihanID","PenghuniID","PaketID","Periode","Jumlah","JumlahAsal","Status","TanggalTerbit","JatuhTempo","TanggalLunas","DiterbitkanOleh","Keterangan"],"Pembayaran":["PembayaranID","TagihanID","PenghuniID","Jumlah","Metode","NoReferensi","BuktiID","Status","TanggalBayar","VerifiedBy","VerifiedAt","Catatan"],"Aduan":["AduanID","PenghuniID","NamaPelapor","Kategori","Judul","Deskripsi","Prioritas","LampiranID","Status","TanggalBuat","TanggalSelesai","PetugasID"],"AduanBalasan":["BalasanID","AduanID","UserID","NamaPengirim","Pesan","Tanggal"],"Teguran":["TeguranID","PenghuniID","KodePelanggaran","JenisPelanggaran","Poin","Deskripsi","Lokasi","TanggalKejadian","Sanksi","TindakLanjut","BuktiID","NomorSurat","JenisSP","Status","DiterbitkanOleh","TanggalTerbit","SkorSebelum","SkorSesudah","NotifWali"],"SkorLog":["SkorLogID","PenghuniID","SkorLama","SkorBaru","Perubahan","Alasan","RefID","Tanggal","OlehUserID"],"Dokumen":["DokumenID","Judul","Kategori","DriveFileID","UkuranKB","Deskripsi","Status","DiunggahOleh","Tanggal"],"Pengumuman":["PengumumanID","Judul","Isi","Target","Status","TanggalKirim","DibuatOleh"],"Notifikasi":["NotifID","UserID","Judul","Pesan","Tipe","Link","Dibaca","Tanggal"],"AuditLog":["AuditID","UserID","NamaUser","Role","Aksi","Target","Detail","Tanggal"],"Pengaturan":["Kunci","Nilai","Keterangan"],"ImportLog":["ImportID","Tabel","Tanggal","TotalBaris","BarisSukses","BarisGagal","RingkasanError","DilakukanOleh"],"BackupLog":["BackupID","Tanggal","Label","FileID","LinkDrive","UkuranMB","DibuatOleh"],"AntrianNotif":["AntrianID","Kanal","Tujuan","NamaPenerima","Subjek","Pesan","Event","RefID","BlastID","Status","Percobaan","Respon","DibuatPada","DikirimPada"],"BlastWA":["BlastID","Judul","Pesan","Sasaran","Total","Terkirim","Gagal","UkuranBatch","JedaDetik","Status","DibuatOleh","Tanggal","SelesaiPada"],"MigrasiLog":["MigrasiID","Sumber","NamaSumber","Sheet","Mode","BarisSumber","Ditambah","Diperbarui","Dilewati","Peringatan","Tanggal","DilakukanOleh"],"CRM_Kontak":["KontakID","Nama","Email","NoWA","Segmen","Sumber","RefID","Tag","StatusWA","CekWAAt","EmailValid","OptOut","Catatan","JumlahPesan","TerakhirDihubungi","Info","DibuatPada","DiperbaruiPada"],"CRM_Interaksi":["InteraksiID","KontakID","Kanal","Arah","Ringkasan","RefID","Oleh","Tanggal"],"ReminderLog":["ReminderID","Kunci","Jenis","Periode","PenghuniID","TagihanID","Nama","Jumlah","JatuhTempo","Mode","Kanal","Status","Oleh","Tanggal"],"DE_Template":["TemplateID","Nama","Jenis","DocID","Skema","Status","TtdNama","TtdJabatan","TtdGambarID","Kota","DibuatOleh","DibuatPada","DiperbaruiPada"],"DE_Dokumen":["DokumenID","TemplateID","Jenis","Nomor","RefID","PenghuniID","Judul","Data","DocID","PdfID","KodeVerifikasi","Hash","Status","DibuatOleh","DibuatPada"],"LogMakan":["LogID","PenghuniID","NamaLengkap","Tanggal","WaktuMakan","Timestamp","ScannedBy","Status","Catatan"]};
+  var SB_COLS = {"Users":["UserID","Username","Email","NamaLengkap","Role","PasswordHash","Status","PenghuniID","JenisKelamin","SandiAwal","NoHP","CreatedBy","CreatedAt","GoogleSub","FotoGoogle","LastLogin"],"MasterData":["MasterID","Tipe","Kode","Nilai","Induk","Poin","Urutan","Status"],"Pendaftar":["PendaftarID","UserID","NIM","NamaLengkap","Email","NoHP","JenisKelamin","ProgramKelas","Prodi","Angkatan","BeratBadan","Alamat","NamaWali","NoHPWali","PaketID","BayarAwal","BulanDibayar","FotoID","SuratID","BuktiID","Status","Catatan","TanggalDaftar","VerifiedBy","VerifiedAt","FotoThumbID","StatusWA","CekWAAt"],"Penghuni":["PenghuniID","PendaftarID","UserID","NIM","NamaLengkap","Email","NoHP","JenisKelamin","ProgramKelas","Prodi","Angkatan","BeratBadan","KamarID","PaketID","Skor","Status","TanggalMasuk","TanggalKeluar","FotoID","EligibleKartu","KartuApprovedBy","KartuApprovedAt","NamaWali","NoHPWali","FotoThumbID","StatusWA","CekWAAt"],"Gedung":["GedungID","NamaGedung","Tipe","JumlahLantai","Musyrif","NoHPMusyrif","Status"],"Kamar":["KamarID","GedungID","NomorKamar","Lantai","Kapasitas","Fasilitas","Status","Catatan"],"Penempatan":["PenempatanID","PenghuniID","KamarID","NomorBed","TanggalMasuk","TanggalKeluar","Status","DitempatkanOleh"],"Paket":["PaketID","NamaPaket","Harga","Deskripsi","Status","IncludeMakan"],"Tagihan":["TagihanID","PenghuniID","PaketID","Periode","Jumlah","JumlahAsal","Status","TanggalTerbit","JatuhTempo","TanggalLunas","DiterbitkanOleh","Keterangan"],"Pembayaran":["PembayaranID","TagihanID","PenghuniID","Jumlah","Metode","NoReferensi","BuktiID","Status","TanggalBayar","VerifiedBy","VerifiedAt","Catatan","GrupBayar"],"Aduan":["AduanID","PenghuniID","NamaPelapor","Kategori","Judul","Deskripsi","Prioritas","LampiranID","Status","TanggalBuat","TanggalSelesai","PetugasID"],"AduanBalasan":["BalasanID","AduanID","UserID","NamaPengirim","Pesan","Tanggal"],"Teguran":["TeguranID","PenghuniID","KodePelanggaran","JenisPelanggaran","Poin","Deskripsi","Lokasi","TanggalKejadian","Sanksi","TindakLanjut","BuktiID","NomorSurat","JenisSP","Status","DiterbitkanOleh","TanggalTerbit","SkorSebelum","SkorSesudah","NotifWali"],"SkorLog":["SkorLogID","PenghuniID","SkorLama","SkorBaru","Perubahan","Alasan","RefID","Tanggal","OlehUserID"],"Dokumen":["DokumenID","Judul","Kategori","DriveFileID","UkuranKB","Deskripsi","Status","DiunggahOleh","Tanggal"],"Pengumuman":["PengumumanID","Judul","Isi","Target","Status","TanggalKirim","DibuatOleh"],"Notifikasi":["NotifID","UserID","Judul","Pesan","Tipe","Link","Dibaca","Tanggal"],"AuditLog":["AuditID","UserID","NamaUser","Role","Aksi","Target","Detail","Tanggal"],"Pengaturan":["Kunci","Nilai","Keterangan"],"ImportLog":["ImportID","Tabel","Tanggal","TotalBaris","BarisSukses","BarisGagal","RingkasanError","DilakukanOleh"],"BackupLog":["BackupID","Tanggal","Label","FileID","LinkDrive","UkuranMB","DibuatOleh"],"AntrianNotif":["AntrianID","Kanal","Tujuan","NamaPenerima","Subjek","Pesan","Event","RefID","BlastID","Status","Percobaan","Respon","DibuatPada","DikirimPada"],"BlastWA":["BlastID","Judul","Pesan","Sasaran","Total","Terkirim","Gagal","UkuranBatch","JedaDetik","Status","DibuatOleh","Tanggal","SelesaiPada"],"MigrasiLog":["MigrasiID","Sumber","NamaSumber","Sheet","Mode","BarisSumber","Ditambah","Diperbarui","Dilewati","Peringatan","Tanggal","DilakukanOleh"],"CRM_Kontak":["KontakID","Nama","Email","NoWA","Segmen","Sumber","RefID","Tag","StatusWA","CekWAAt","EmailValid","OptOut","Catatan","JumlahPesan","TerakhirDihubungi","Info","DibuatPada","DiperbaruiPada"],"CRM_Interaksi":["InteraksiID","KontakID","Kanal","Arah","Ringkasan","RefID","Oleh","Tanggal"],"ReminderLog":["ReminderID","Kunci","Jenis","Periode","PenghuniID","TagihanID","Nama","Jumlah","JatuhTempo","Mode","Kanal","Status","Oleh","Tanggal"],"DE_Template":["TemplateID","Nama","Jenis","DocID","Skema","Status","TtdNama","TtdJabatan","TtdGambarID","Kota","DibuatOleh","DibuatPada","DiperbaruiPada"],"DE_Dokumen":["DokumenID","TemplateID","Jenis","Nomor","RefID","PenghuniID","Judul","Data","DocID","PdfID","KodeVerifikasi","Hash","Status","DibuatOleh","DibuatPada"],"LogMakan":["LogID","PenghuniID","NamaLengkap","Tanggal","WaktuMakan","Timestamp","ScannedBy","Status","Catatan"]};
   var SB_TAIL = {"AuditLog":"Tanggal","Notifikasi":"Tanggal","AntrianNotif":"DibuatPada","LogMakan":"Timestamp","SkorLog":"Tanggal","ImportLog":"Tanggal","CRM_Interaksi":"Tanggal","ReminderLog":"Tanggal"};
   var BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   var BULAN_P = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -695,7 +695,13 @@
         jumlahLunas: hasil.filter(function (t) { return t.Status === 'Lunas'; }).length,
         jumlahGratis: hasil.filter(function (t) { return t.Status === 'Gratis'; }).length,
         jumlahBelum: hasil.filter(function (t) { return t.Status === 'Belum Bayar' || t.Status === 'Terlambat'; }).length,
-        menungguVerifikasi: DB.filter('Pembayaran', function (b) { return b.Status === 'Menunggu'; }).length
+        // v7.1: dihitung per TRANSFER (1 bukti untuk beberapa bulan = 1 transaksi)
+        menungguVerifikasi: (function () {
+          const k = {};
+          DB.filter('Pembayaran', function (b) { return b.Status === 'Menunggu'; })
+            .forEach(function (b) { k[b.GrupBayar || b.PembayaranID] = 1; });
+          return Object.keys(k).length;
+        })()
       }
     });
   }
@@ -721,22 +727,37 @@
 
   // ← Layanan.gs
   function svcBillingEligible(p, u) {
-    const periode = p.periode || periodeNow_();
-    const tagihan = DB.filter('Tagihan', function (t) { return String(t.Periode) === periode; });
-    const sudah   = tagihan.map(function (t) { return t.PenghuniID; });
+    // v7.1: bisa beberapa bulan sekaligus (periodeList) — mahasiswa muncul bila masih ada bulan terpilih yang belum ditagih
+    const daftar  = daftarPeriode_(p);
+    const periode = daftar[0] || periodeNow_();
+    const ada = {};
+    DB.all('Tagihan').forEach(function (t) { ada[t.PenghuniID + '|' + String(t.Periode)] = 1; });
     const paket   = DB.all('Paket');
     const kamar   = DB.all('Kamar');
-    const rows = DB.all('Penghuni').filter(function (r) {
-      return r.Status === 'Aktif' && sudah.indexOf(r.PenghuniID) === -1;
-    }).map(function (r) {
+    const rows = DB.all('Penghuni').filter(function (r) { return r.Status === 'Aktif'; }).map(function (r) {
       const pk = paket.filter(function (x) { return x.PaketID === r.PaketID; })[0] || {};
       const km = kamar.filter(function (x) { return x.KamarID === r.KamarID; })[0] || {};
+      const bulanBaru = daftar.filter(function (per) { return !ada[r.PenghuniID + '|' + per]; });
+      const harga = toNumber_(pk.Harga);
       return { PenghuniID: r.PenghuniID, NamaLengkap: r.NamaLengkap, NIM: r.NIM,
                JenisKelamin: r.JenisKelamin, NomorKamar: km.NomorKamar || '-',
-               PaketID: r.PaketID, NamaPaket: pk.NamaPaket || '-', Harga: toNumber_(pk.Harga) };
+               PaketID: r.PaketID, NamaPaket: pk.NamaPaket || '-', Harga: harga,
+               bulanBaru: bulanBaru, Total: harga * bulanBaru.length };
+    }).filter(function (r) { return r.bulanBaru.length > 0; });
+    return ok_({ periode: periode, periodeList: daftar, rows: rows,
+                 estimasi: rows.reduce(function (s, r) { return s + r.Total; }, 0) });
+  }
+
+  // ← Layanan.gs
+  function daftarPeriode_(p) {
+    let a = [].concat(p.periodeList || []);
+    if (!a.length) a = [p.periode || periodeNow_()];
+    const set = {};
+    a.forEach(function (x) {
+      const s = String(x === null || x === undefined ? '' : x).trim().substring(0, 7);
+      if (/^\d{4}-(0[1-9]|1[0-2])$/.test(s)) set[s] = 1;
     });
-    return ok_({ periode: periode, rows: rows,
-                 estimasi: rows.reduce(function (s, r) { return s + r.Harga; }, 0) });
+    return Object.keys(set).sort().slice(0, 24);
   }
 
   // ← Layanan.gs

@@ -9,7 +9,7 @@ var CONFIG = {
   /* 1) URL Web App Apps Script — harus berakhiran /exec
    *    Dapatkan dari: Apps Script → Deploy → New deployment → Web app
    *    (Execute as: Me · Who has access: Anyone)                         */
-  GAS_URL: 'https://script.google.com/macros/s/AKfycbxUB3PXMs6w3T5GVJaW23xGqcnzc3q8WsHTDTabjK1ExTfzoIRQf6uW-DlEo7K8qYHg/exec',
+  GAS_URL: 'https://script.google.com/macros/s/AKfycbypPEQ7t7ncGciq01bkMCH1xa-LkI8WKOSN4LO5xPTlrWfPLAF5omx4teVjb8Kerx4H/exec',
 
   /* 2) API Key — tampil di Execution log saat Anda menjalankan setup()
    *    Contoh: 'ASR-7F3A9C21B4E85D06A1C3F972'                            */
