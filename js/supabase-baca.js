@@ -684,6 +684,7 @@
       });
     }
     if (p.jenisKelamin) hasil = hasil.filter(function (t) { return t.JenisKelamin === p.jenisKelamin; });
+    if (p.denganBukti) hasil = tambahBukti_(hasil);   // v7.2: Ekspor Rekap Keuangan + link bukti transfer
   
     const total = hasil.reduce(function (s, t) { return s + toNumber_(t.Jumlah); }, 0);
     const terkumpul = hasil.filter(function (t) { return t.Status === 'Lunas'; })
@@ -703,6 +704,27 @@
           return Object.keys(k).length;
         })()
       }
+    });
+  }
+
+  // ← Layanan.gs
+  function tambahBukti_(rows) {
+    const prioritas = { 'Terverifikasi': 3, 'Menunggu': 2, 'Ditolak': 1 };
+    const kunci = function (b) {
+      return (prioritas[b.Status] || 0) + '|' + String(b.TanggalBayar) + '|' + ('0000000000' + String(b.PembayaranID).replace(/\D/g, '')).slice(-10);
+    };
+    const pilih = {}, perGrup = {};
+    DB.all('Pembayaran').forEach(function (b) {
+      if (b.GrupBayar) perGrup[b.GrupBayar] = (perGrup[b.GrupBayar] || 0) + 1;
+      const lama = pilih[b.TagihanID];
+      if (!lama || kunci(b) > kunci(lama)) pilih[b.TagihanID] = b;
+    });
+    return rows.map(function (t) {
+      const b = pilih[t.TagihanID];
+      return Object.assign({}, t, b ? {
+        TanggalBayar: b.TanggalBayar, JumlahBayar: toNumber_(b.Jumlah), MetodeBayar: b.Metode, NoReferensi: b.NoReferensi,
+        StatusBayar: b.Status, BuktiURL: fileUrl_(b.BuktiID), BuktiUntuk: b.GrupBayar ? perGrup[b.GrupBayar] : 1
+      } : { TanggalBayar: '', JumlahBayar: '', MetodeBayar: '', NoReferensi: '', StatusBayar: '', BuktiURL: '', BuktiUntuk: 0 });
     });
   }
 

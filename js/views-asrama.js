@@ -218,16 +218,90 @@ window.VIEWS['pendaftar'] = {
 /* =========================================================================
  * MANAJEMEN PENGHUNI
  * ======================================================================= */
+/* =========================================================================
+ * v7.2 — POPUP BUKTI TRANSFER (tanpa membuka jendela/tab baru)
+ *  Gambar ditampilkan dari thumbnail Google Drive ukuran besar; PDF / gambar yang
+ *  gagal dimuat otomatis beralih ke pratinjau dokumen Drive di dalam popup.
+ * ======================================================================= */
+var SA_BUKTI_POPUP = {
+  props: { id: String, url: String, judul: String, sub: String },
+  emits: ['tutup'],
+  data: function () { return { mode: 'gambar', zoom: false, putar: 0, muat: true }; },
+  computed: {
+    fileId: function () {
+      if (this.id) return this.id;
+      var m = String(this.url || '').match(/\/d\/([A-Za-z0-9_-]+)|[?&]id=([A-Za-z0-9_-]+)/);
+      return m ? (m[1] || m[2]) : '';
+    },
+    srcGambar: function () { return 'https://drive.google.com/thumbnail?id=' + this.fileId + '&sz=w1600'; },
+    srcDokumen: function () { return 'https://drive.google.com/file/d/' + this.fileId + '/preview'; },
+    gayaGambar: function () { return { transform: 'rotate(' + this.putar + 'deg)' }; }
+  },
+  mounted: function () {
+    var vm = this;
+    this.penanganEsc = function (e) { if (e.key === 'Escape') { e.stopPropagation(); vm.$emit('tutup'); } };
+    document.addEventListener('keydown', this.penanganEsc, true);
+  },
+  unmounted: function () { document.removeEventListener('keydown', this.penanganEsc, true); },
+  methods: {
+    gantiMode: function () { this.mode = this.mode === 'gambar' ? 'dokumen' : 'gambar'; this.muat = true; this.zoom = false; },
+    gagalGambar: function () { this.mode = 'dokumen'; this.muat = true; }
+  },
+  template: `
+    <div class="overlay bukti-overlay" @click.self="$emit('tutup')">
+      <div class="bukti-pop" role="dialog" aria-modal="true" :aria-label="judul || 'Bukti transfer'">
+        <div class="bukti-head">
+          <div class="t"><b>🧾 {{ judul || 'Bukti Transfer' }}</b><small v-if="sub">{{ sub }}</small></div>
+          <div class="bukti-tools">
+            <button v-if="mode === 'gambar'" type="button" @click="putar = (putar + 90) % 360" title="Putar 90°">⟳ Putar</button>
+            <button v-if="mode === 'gambar'" type="button" @click="zoom = !zoom">{{ zoom ? '⤡ Pas layar' : '🔍 Perbesar' }}</button>
+            <button type="button" @click="gantiMode">{{ mode === 'gambar' ? '📄 Mode dokumen' : '🖼 Mode gambar' }}</button>
+            <button type="button" class="x" @click="$emit('tutup')" aria-label="Tutup">✕</button>
+          </div>
+        </div>
+        <div class="bukti-body" :class="{zoom: zoom, dok: mode === 'dokumen', tegak: putar % 180 !== 0}">
+          <div v-if="!fileId" class="bukti-muat">Bukti tidak tersedia.</div>
+          <template v-else-if="mode === 'gambar'">
+            <div v-if="muat" class="bukti-muat"><span class="spin"></span> Memuat bukti transfer…</div>
+            <img v-show="!muat" :src="srcGambar" :style="gayaGambar" alt="Bukti transfer" referrerpolicy="no-referrer"
+                 @load="muat = false" @error="gagalGambar" @click="zoom = !zoom">
+          </template>
+          <iframe v-else :src="srcDokumen" title="Pratinjau bukti transfer" allow="autoplay"></iframe>
+        </div>
+        <div class="bukti-foot"><span>Esc / klik di luar untuk menutup</span><slot></slot></div>
+      </div>
+    </div>`
+};
+
+/** v7.2 — ekspor .xlsx dengan kolom tautan yang bisa diklik (mis. bukti transfer di Google Drive) */
+async function unduhExcelTautan_(rows, namaFile, namaSheet, kolomLink) {
+  if (!rows || !rows.length) { toast('Tidak ada data untuk diekspor.', 'warning'); return; }
+  try { await pustaka('xlsx'); } catch (e) { toast(e.message, 'error'); return; }
+  var ws = XLSX.utils.json_to_sheet(rows);
+  var kolom = Object.keys(rows[0]), c = kolom.indexOf(kolomLink), n = 0;
+  if (c > -1) rows.forEach(function (r, i) {
+    var ref = XLSX.utils.encode_cell({ r: i + 1, c: c });
+    if (r[kolomLink] && ws[ref]) { ws[ref].l = { Target: String(r[kolomLink]), Tooltip: 'Buka bukti transfer' }; n++; }
+  });
+  ws['!cols'] = kolom.map(function (k) { return { wch: k === kolomLink ? 58 : Math.min(30, Math.max(10, k.length + 3)) }; });
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, (namaSheet || 'Data').substring(0, 30));
+  XLSX.writeFile(wb, (namaFile || 'ekspor') + '.xlsx');
+  toast(rows.length + ' baris diekspor ke Excel · ' + n + ' link bukti transfer.', 'success');
+}
+
 window.VIEWS['penghuni'] = {
   props: ['user'],
   emits: ['pindah'],
+  components: { 'sa-bukti-popup': SA_BUKTI_POPUP },
   data: function () {
     return {
       rows: [], ringkasan: {}, memuat: true, ref: null,
       f: { cari: '', status: 'Aktif', gedungId: '', prodi: '', angkatan: '', paketId: '', hanyaKartu: false },
       detail: null, detailData: null, halaman: 1, perHal: 12,
       tambah: false, baru: {}, fotoBaru: null, kirimAkun: true, proses: false,
-      lihatSandi: {}, fotoGanti: null, unggahFoto: false, hanyaTanpaFoto: false
+      lihatSandi: {}, fotoGanti: null, unggahFoto: false, hanyaTanpaFoto: false,
+      buktiPop: null   // v7.2: popup bukti transfer di Detail Penghuni
     };
   },
   mounted: function () {
@@ -283,8 +357,20 @@ window.VIEWS['penghuni'] = {
       this.hanyaTanpaFoto = false;
       this.muat();
     },
+    /* ---- v7.2: riwayat pembayaran di Detail Penghuni ---- */
+    labelBulanBayar: function (daftar) {
+      return (daftar || []).map(function (b) { return b.Dibatalkan ? '(tagihan dibatalkan)' : periodeLabel(b.Periode); }).join(', ');
+    },
+    singkatPeriode: function (per) {
+      var x = String(per || '').split('-');
+      return x.length < 2 ? String(per || '-') : (BULAN_ID[Number(x[1]) - 1] || '').substring(0, 3) + ' ' + x[0];
+    },
+    lihatBukti: function (x) {
+      this.buktiPop = { id: x.BuktiID, url: x.BuktiURL, judul: 'Bukti Transfer · ' + (this.detail ? this.detail.NamaLengkap : ''),
+        sub: this.labelBulanBayar(x.bulan) + ' · ' + rupiah(x.Jumlah) + ' · ' + tanggal(x.TanggalBayar, 'pendek') + ' · ' + x.Status };
+    },
     bukaDetail: async function (r) {
-      this.detail = r; this.detailData = null; this.fotoGanti = null; this.unggahFoto = false;
+      this.detail = r; this.detailData = null; this.fotoGanti = null; this.unggahFoto = false; this.buktiPop = null;
       var res = await callApi('residents.profile', { penghuniId: r.PenghuniID });
       if (res.ok) this.detailData = res.data;
     },
@@ -633,6 +719,47 @@ window.VIEWS['penghuni'] = {
           </div>
         </div>
 
+        <!-- v7.2: RIWAYAT PEMBAYARAN (peran menu Tagihan) — bukti dibuka lewat popup -->
+        <template v-if="detailData.riwayatBayar">
+          <div class="label mt-lg">Riwayat Pembayaran</div>
+          <div class="rb-kpi mb-md">
+            <div class="ok"><small>Sudah lunas</small><b>{{ rupiah(detailData.riwayatBayar.ringkasan.lunas) }}</b>
+              <span>{{ detailData.riwayatBayar.ringkasan.bulanLunas }} bulan</span></div>
+            <div class="warn"><small>Menunggu verifikasi</small><b>{{ rupiah(detailData.riwayatBayar.ringkasan.menunggu) }}</b>
+              <span>{{ detailData.riwayatBayar.ringkasan.bulanMenunggu }} bulan</span></div>
+            <div class="danger"><small>Belum dibayar</small><b>{{ rupiah(detailData.riwayatBayar.ringkasan.tunggakan) }}</b>
+              <span>{{ detailData.riwayatBayar.ringkasan.bulanBelum }} bulan</span></div>
+            <div><small>Bukti diunggah</small><b>{{ detailData.riwayatBayar.transaksi.length }}</b><span>transaksi</span></div>
+          </div>
+          <div class="bulan-status mb-md" v-if="detailData.riwayatBayar.tagihan.length">
+            <span v-for="t in detailData.riwayatBayar.tagihan" :key="t.TagihanID" class="badge" :class="kelasStatus(t.Status)"
+                  :title="t.TagihanID + ' · ' + rupiah(t.Jumlah) + (t.TanggalLunas ? ' · lunas ' + tanggal(t.TanggalLunas, 'pendek') : '')">
+              {{ singkatPeriode(t.Periode) }} · {{ t.Status }}</span>
+          </div>
+          <div class="table-wrap" v-if="detailData.riwayatBayar.transaksi.length">
+            <table class="tbl">
+              <thead><tr><th>Tanggal Bayar</th><th>Bulan Dibayar</th><th class="num">Nominal</th><th>Metode / Ref.</th>
+                <th>Status</th><th>Bukti</th></tr></thead>
+              <tbody>
+                <tr v-for="x in detailData.riwayatBayar.transaksi" :key="x.PembayaranID">
+                  <td class="fs-sm" style="white-space:nowrap">{{ tanggal(x.TanggalBayar, 'pendek') }}</td>
+                  <td class="fs-sm">{{ labelBulanBayar(x.bulan) }}
+                    <div class="fs-xs txt-3" v-if="x.bulan.length > 1">{{ x.bulan.length }} bulan · 1 bukti</div></td>
+                  <td class="num fw6" style="white-space:nowrap">{{ rupiah(x.Jumlah) }}</td>
+                  <td class="fs-sm">{{ x.Metode || '-' }}<div class="fs-xs txt-3">{{ x.NoReferensi || '-' }}</div></td>
+                  <td><sa-badge :teks="x.Status"></sa-badge>
+                    <div class="fs-xs txt-danger mt-sm" v-if="x.Status === 'Ditolak' && x.Catatan">{{ x.Catatan }}</div></td>
+                  <td><button v-if="x.BuktiID" type="button" class="bukti-mini" @click="lihatBukti(x)" title="Lihat bukti transfer">
+                        <img :src="x.BuktiThumb" alt="Bukti" loading="lazy" referrerpolicy="no-referrer" @error="$event.target.style.visibility='hidden'">
+                        <span>🔍</span></button>
+                      <span v-else class="fs-xs txt-3">—</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-else class="fs-sm txt-3">Belum ada bukti pembayaran yang diunggah.</p>
+        </template>
+
         <div class="label mt-lg">Riwayat Skor Kedisiplinan</div>
         <div class="timeline" v-if="detailData.skorLog.length">
           <div class="tl-item" v-for="s in detailData.skorLog.slice(0,6)" :key="s.SkorLogID"
@@ -646,6 +773,10 @@ window.VIEWS['penghuni'] = {
       </template>
       <template #aksi><button class="btn secondary" @click="detail = null">Tutup</button></template>
     </sa-modal>
+
+    <!-- v7.2: POPUP BUKTI TRANSFER -->
+    <sa-bukti-popup v-if="buktiPop" :id="buktiPop.id" :url="buktiPop.url" :judul="buktiPop.judul" :sub="buktiPop.sub"
+                    @tutup="buktiPop = null"></sa-bukti-popup>
 
     <!-- MODAL TAMBAH -->
     <sa-modal v-if="tambah" judul="Tambah Penghuni Manual" sub="Untuk mahasiswa yang tidak melalui formulir pendaftaran. Foto profil wajib."
@@ -1219,13 +1350,16 @@ window.VIEWS['gedung-kamar'] = {
  * ======================================================================= */
 window.VIEWS['tagihan'] = {
   props: ['user'],
+  components: { 'sa-bukti-popup': SA_BUKTI_POPUP },
   data: function () {
     return {
       tab: 'daftar', rows: [], ringkasan: {}, memuat: true,
       f: { periode: '', status: '', cari: '' },
       pending: [], eligible: null, terpilih: [], periodeBaru: '', proses: false, verif: null, catatan: '',
       // v7.1: tagihan beberapa bulan sekaligus — bulan dicentang bebas (lintas tahun)
-      bulanDipilih: [], tahunTampil: new Date().getFullYear(), tundaMuat: null
+      bulanDipilih: [], tahunTampil: new Date().getFullYear(), tundaMuat: null,
+      // v7.2: popup bukti transfer & batal terbitkan
+      buktiPop: null, modeTerbit: 'terbit', batalSemua: [], batalMemuat: false, pilihBatal: []
     };
   },
   mounted: function () {
@@ -1255,6 +1389,21 @@ window.VIEWS['tagihan'] = {
     },
     labelBulanDipilih: function () {
       return this.bulanDipilih.map(function (p) { return periodeLabel(p); }).join(', ');
+    },
+    /* ---- v7.2: batal terbitkan ---- */
+    batalRows: function () {
+      var bln = this.bulanDipilih, BISA = { 'Belum Bayar': 1, 'Terlambat': 1, 'Gratis': 1 };
+      return this.batalSemua.filter(function (t) { return bln.indexOf(String(t.Periode)) > -1; })
+        .map(function (t) { return Object.assign({}, t, { bisa: !!BISA[t.Status] }); })
+        .sort(function (a, b) {
+          return String(a.Periode).localeCompare(String(b.Periode)) || String(a.NamaLengkap).localeCompare(String(b.NamaLengkap));
+        });
+    },
+    batalBisa: function () { return this.batalRows.filter(function (t) { return t.bisa; }); },
+    nilaiBatalPilih: function () {
+      var p = this.pilihBatal;
+      return this.batalBisa.filter(function (t) { return p.indexOf(t.TagihanID) > -1; })
+        .reduce(function (s, t) { return s + (Number(t.Jumlah) || 0); }, 0);
     }
   },
   methods: {
@@ -1294,6 +1443,11 @@ window.VIEWS['tagihan'] = {
     kosongkanBulan: function () { this.bulanDipilih = []; this.jadwalEligible(); },
     jadwalEligible: function () {
       var vm = this;
+      if (this.modeTerbit === 'batal') {   // v7.2: mode batal cukup menyaring daftar yang sudah dimuat
+        var ada = this.batalBisa.map(function (t) { return t.TagihanID; });
+        this.pilihBatal = this.pilihBatal.filter(function (id) { return ada.indexOf(id) > -1; });
+        return;
+      }
       clearTimeout(this.tundaMuat);
       this.tundaMuat = setTimeout(function () { vm.muatEligible(); }, 350);
     },
@@ -1304,7 +1458,51 @@ window.VIEWS['tagihan'] = {
     gantiTab: function (t) {
       this.tab = t;
       if (t === 'verifikasi') this.muatPending();
-      if (t === 'terbitkan') this.muatEligible();
+      if (t === 'terbitkan') { if (this.modeTerbit === 'batal') this.muatBatal(); else this.muatEligible(); }
+    },
+    /* ---- v7.2: batal terbitkan ---- */
+    gantiModeTerbit: function (m) {
+      if (this.modeTerbit === m) return;
+      this.modeTerbit = m; this.pilihBatal = []; this.terpilih = [];
+      if (m === 'batal') this.muatBatal(); else this.muatEligible();
+    },
+    muatBatal: async function () {
+      this.batalMemuat = !this.batalSemua.length;
+      var res = await callApi('billing.list', {});
+      this.batalMemuat = false;
+      if (res.ok) {
+        this.batalSemua = res.data.rows;
+        var ada = this.batalBisa.map(function (t) { return t.TagihanID; });
+        this.pilihBatal = this.pilihBatal.filter(function (id) { return ada.indexOf(id) > -1; });
+      }
+    },
+    pilihSemuaBatal: function (ev) {
+      this.pilihBatal = ev.target.checked ? this.batalBisa.map(function (t) { return t.TagihanID; }) : [];
+    },
+    batalkan: async function (semua) {
+      var ids = semua ? this.batalBisa.map(function (t) { return t.TagihanID; }) : this.pilihBatal.slice();
+      if (!ids.length) { toast('Pilih minimal satu tagihan yang akan dibatalkan.', 'warning'); return; }
+      var rows = this.batalBisa.filter(function (t) { return ids.indexOf(t.TagihanID) > -1; });
+      var nMhs = Object.keys(rows.reduce(function (o, t) { o[t.PenghuniID] = 1; return o; }, {})).length;
+      var nilai = rows.reduce(function (s, t) { return s + (Number(t.Jumlah) || 0); }, 0);
+      var ya = await konfirmasi('Batalkan ' + ids.length + ' tagihan untuk ' + nMhs + ' mahasiswa?',
+        'Bulan: ' + this.labelBulanDipilih + ' · total ' + rupiah(nilai) + '. Tagihan akan dihapus (bulan itu bisa diterbitkan ulang) ' +
+        'dan mahasiswa mendapat notifikasi di aplikasi. Tagihan yang sudah Lunas / Menunggu Verifikasi tidak ikut dibatalkan.',
+        'Ya, batalkan', true);
+      if (!ya) return;
+      this.proses = true;
+      var res = await callApi('billing.cancel', { tagihanIds: ids });
+      this.proses = false;
+      if (res.ok) {
+        toast(res.message, res.data && res.data.dilewati && res.data.dilewati.length ? 'warning' : 'success');
+        this.pilihBatal = []; bersihkanCache(); this.muatBatal(); this.muat();
+      }
+    },
+    /* ---- v7.2: popup bukti transfer (tanpa jendela baru) ---- */
+    bukaBukti: function (b) {
+      var bulan = b.anggota && b.anggota.length > 1 ? this.singkatBulan(b.anggota) : periodeLabel(b.Periode);
+      this.buktiPop = { id: b.BuktiID, url: b.BuktiURL, judul: 'Bukti Transfer · ' + (b.NamaLengkap || ''),
+        sub: bulan + ' · ' + rupiah(b.Jumlah) + ' · ' + (b.Metode || '') + (b.NoReferensi ? ' · ' + b.NoReferensi : '') };
     },
     pilihSemua: function (ev) {
       this.terpilih = ev.target.checked ? this.eligible.rows.map(function (r) { return r.PenghuniID; }) : [];
@@ -1334,12 +1532,21 @@ window.VIEWS['tagihan'] = {
       this.proses = false;
       if (res.ok) { toast(res.message, 'success'); this.verif = null; this.catatan = ''; bersihkanCache(); this.muatPending(); this.muat(); }
     },
-    ekspor: function () {
-      unduhExcel(this.rows.map(function (t) {
+    /** v7.2: rekap keuangan + data pembayaran + LINK BUKTI TRANSFER (bisa diklik di Excel) */
+    ekspor: async function () {
+      this.proses = true;
+      var res = await callApi('billing.list', Object.assign({}, this.f, { denganBukti: true }));
+      this.proses = false;
+      if (!res.ok) return;
+      await unduhExcelTautan_(res.data.rows.map(function (t) {
         return { Invoice: t.TagihanID, NIM: t.NIM, Nama: t.NamaLengkap, Kamar: t.NomorKamar,
                  Paket: t.NamaPaket, Periode: t.Periode, Nominal: t.Jumlah, Status: t.Status,
-                 JatuhTempo: t.JatuhTempo, Lunas: t.TanggalLunas };
-      }), 'Tagihan_' + (this.f.periode || 'semua'), 'Tagihan');
+                 JatuhTempo: t.JatuhTempo, Lunas: t.TanggalLunas,
+                 'Tanggal Bayar': t.TanggalBayar, 'Nominal Dibayar': t.JumlahBayar, 'Metode': t.MetodeBayar,
+                 'No Referensi': t.NoReferensi, 'Status Verifikasi': t.StatusBayar,
+                 'Keterangan Bukti': t.BuktiUntuk > 1 ? '1 bukti untuk ' + t.BuktiUntuk + ' bulan' : '',
+                 'Link Bukti Transfer': t.BuktiURL };
+      }), 'Tagihan_' + (this.f.periode || 'semua'), 'Tagihan', 'Link Bukti Transfer');
     }
   },
   template: `
@@ -1348,7 +1555,7 @@ window.VIEWS['tagihan'] = {
              sub="Kelola penagihan berkala, verifikasi bukti transfer, dan penerbitan faktur massal mahasiswa."
              :jalur="['Operasional Asrama','Tagihan &amp; Pembayaran']">
       <template #aksi>
-        <button class="btn secondary" @click="ekspor">⬇ Ekspor Rekap Keuangan</button>
+        <button class="btn secondary" :disabled="proses" @click="ekspor">⬇ Ekspor Rekap Keuangan</button>
         <button class="btn" @click="gantiTab('terbitkan')">＋ Terbitkan Tagihan Baru</button>
       </template>
     </sa-page>
@@ -1430,7 +1637,9 @@ window.VIEWS['tagihan'] = {
               <td class="num fw6 txt-ok">{{ rupiah(b.Jumlah) }}</td>
               <td class="num">{{ rupiah(b.NominalTagihan) }}</td>
               <td class="fs-sm">{{ b.Metode }}<div class="fs-xs txt-3">{{ b.NoReferensi }}</div></td>
-              <td><div v-if="b.BuktiURL" style="width:64px"><sa-thumb :src="b.BuktiThumb" :href="b.BuktiURL" tinggi="48"></sa-thumb></div>
+              <td><button v-if="b.BuktiID" type="button" class="bukti-mini" @click="bukaBukti(b)" title="Lihat bukti transfer">
+                    <img :src="b.BuktiThumb" alt="Bukti" loading="lazy" referrerpolicy="no-referrer" @error="$event.target.style.visibility='hidden'">
+                    <span>🔍</span></button>
                   <span v-else class="txt-3 fs-xs">Tanpa bukti</span></td>
               <td><button class="btn xs" @click="verif = b; catatan = ''">Periksa</button></td>
             </tr>
@@ -1444,10 +1653,16 @@ window.VIEWS['tagihan'] = {
     <div class="card" v-else>
       <div class="card-head"><div class="t">
         <div class="card-title">Generator Penagihan Massal</div>
-        <div class="card-sub">Centang bulan apa saja yang ditagihkan (boleh beberapa bulan sekaligus). Mahasiswa bisa membayar per bulan
+        <div class="card-sub" v-if="modeTerbit === 'terbit'">Centang bulan apa saja yang ditagihkan (boleh beberapa bulan sekaligus). Mahasiswa bisa membayar per bulan
           atau beberapa bulan sekaligus dengan 1 bukti; pengingat H-3/H-0 tetap dikirim tiap bulan hanya untuk yang belum bayar.
           Bulan yang sudah ditagih otomatis dilewati (BR-3).</div>
+        <div class="card-sub" v-else>Centang bulan yang tagihannya ingin dibatalkan, lalu pilih tagihan. Hanya tagihan yang belum dibayar
+          yang bisa dibatalkan; bulan itu bisa diterbitkan ulang kapan saja.</div>
       </div></div>
+      <div class="seg mb-md" role="tablist">
+        <button type="button" :class="{on: modeTerbit === 'terbit'}" @click="gantiModeTerbit('terbit')">＋ Terbitkan Tagihan</button>
+        <button type="button" :class="{on: modeTerbit === 'batal'}" @click="gantiModeTerbit('batal')">✕ Batal Terbitkan</button>
+      </div>
       <div class="filters">
         <div class="pills">
           <button @click="tahunTampil--" title="Tahun sebelumnya">‹</button>
@@ -1458,7 +1673,7 @@ window.VIEWS['tagihan'] = {
         <button class="btn sm secondary" @click="pilihBerurutan(5)">5 bulan ke depan</button>
         <button class="btn sm secondary" @click="pilihBerurutan(6)">6 bulan</button>
         <button class="btn sm ghost" @click="kosongkanBulan">Kosongkan</button>
-        <button class="btn sm secondary" @click="segarkan(muatEligible)">↻ Muat ulang daftar</button>
+        <button class="btn sm secondary" @click="modeTerbit === 'batal' ? segarkan(muatBatal) : segarkan(muatEligible)">↻ Muat ulang daftar</button>
       </div>
       <div class="bulan-grid mb-sm">
         <button v-for="b in 12" :key="b" type="button" class="chip" :class="{active: bulanAktif(kodeBulan(tahunTampil, b))}"
@@ -1469,7 +1684,52 @@ window.VIEWS['tagihan'] = {
       <p class="fs-xs txt-2 mb-md" v-if="bulanDipilih.length"><b>{{ bulanDipilih.length }} bulan dipilih:</b> {{ labelBulanDipilih }}</p>
       <p class="fs-xs txt-3 mb-md" v-else>Belum ada bulan dipilih — centang minimal satu bulan.</p>
 
-      <template v-if="eligible">
+      <!-- v7.2: MODE BATAL TERBITKAN -->
+      <template v-if="modeTerbit === 'batal'">
+        <div class="info-box warn mb-md"><span>⚠️</span><div>Hanya tagihan <b>Belum Bayar / Terlambat / Gratis</b> yang bisa dibatalkan.
+          Tagihan yang sudah <b>Lunas</b> atau <b>Menunggu Verifikasi</b> tetap aman (🔒). Tagihan yang dibatalkan dihapus, dicatat di Audit Log,
+          dan mahasiswa mendapat notifikasi di aplikasi.</div></div>
+        <sa-loading v-if="batalMemuat"></sa-loading>
+        <template v-else>
+          <div class="panel-dark mb-md">
+            <div class="it"><small>Tagihan terbit</small><b>{{ batalRows.length }} tagihan</b></div>
+            <div class="it"><small>Bisa dibatalkan</small><b>{{ batalBisa.length }} tagihan</b></div>
+            <div class="it"><small>Sudah dibayar / menunggu</small><b>{{ batalRows.length - batalBisa.length }} tagihan</b></div>
+            <div class="it"><small>Dipilih</small><b>{{ pilihBatal.length }} · {{ rupiah(nilaiBatalPilih) }}</b></div>
+          </div>
+          <div class="table-wrap" v-if="batalRows.length">
+            <table class="tbl">
+              <thead><tr>
+                <th style="width:40px"><input v-if="batalBisa.length" type="checkbox" title="Pilih semua yang bisa dibatalkan"
+                       :checked="pilihBatal.length && pilihBatal.length === batalBisa.length" @change="pilihSemuaBatal"></th>
+                <th>Mahasiswa</th><th>Kamar</th><th>Periode</th><th class="num">Nominal</th><th>Status</th><th>Keterangan</th>
+              </tr></thead>
+              <tbody>
+                <tr v-for="t in batalRows" :key="t.TagihanID" :class="{sel: pilihBatal.indexOf(t.TagihanID) > -1, 'baris-kunci': !t.bisa}">
+                  <td><input v-if="t.bisa" type="checkbox" :value="t.TagihanID" v-model="pilihBatal">
+                      <span v-else title="Tidak bisa dibatalkan">🔒</span></td>
+                  <td><b>{{ t.NamaLengkap }}</b><div class="mono fs-xs txt-3">{{ t.NIM }} · {{ t.TagihanID }}</div></td>
+                  <td class="fs-sm">{{ t.NomorKamar }}</td>
+                  <td class="fs-sm">{{ periodeLabel(t.Periode) }}</td>
+                  <td class="num">{{ rupiah(t.Jumlah) }}</td>
+                  <td><sa-badge :teks="t.Status"></sa-badge></td>
+                  <td class="fs-xs" :class="t.bisa ? 'txt-3' : 'txt-danger'">{{ t.bisa ? 'Bisa dibatalkan' : 'Tidak bisa — sudah ' + t.Status }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <sa-empty v-else judul="Tidak ada tagihan terbit"
+                    :pesan="bulanDipilih.length ? 'Belum ada tagihan untuk ' + labelBulanDipilih + '.' : 'Centang bulan yang tagihannya ingin dibatalkan.'" ikon="📭"></sa-empty>
+          <div class="btn-row mt-md" v-if="batalBisa.length">
+            <button class="btn secondary" :disabled="proses || !pilihBatal.length" @click="batalkan(false)">
+              ✕ Batalkan {{ pilihBatal.length }} Terpilih</button>
+            <button class="btn danger" :disabled="proses" @click="batalkan(true)">
+              <span v-if="proses" class="spin"></span>✕ Batalkan Semua yang Bisa ({{ batalBisa.length }})</button>
+          </div>
+        </template>
+      </template>
+
+      <template v-else-if="eligible">
         <div class="panel-dark mb-md">
           <div class="it"><small>Bulan ditagih</small><b>{{ bulanDipilih.length }} bulan</b></div>
           <div class="it"><small>Mahasiswa belum ditagih</small><b>{{ eligible.rows.length }} mahasiswa</b></div>
@@ -1535,9 +1795,10 @@ window.VIEWS['tagihan'] = {
         <span>ℹ️</span><div>Terdapat kelebihan bayar {{ rupiah(Number(verif.Jumlah) - Number(verif.NominalTagihan)) }} —
         akan dicatat sebagai saldo deposit mahasiswa (BR-6).</div>
       </div>
-      <div class="mt-md" v-if="verif.BuktiURL">
-        <sa-thumb :src="verif.BuktiThumb" :href="verif.BuktiURL" judul="🔍 Bukti transfer — klik untuk ukuran penuh" tinggi="220"></sa-thumb>
-      </div>
+      <button class="bukti-prev mt-md" type="button" v-if="verif.BuktiID" @click="bukaBukti(verif)">
+        <img :src="verif.BuktiThumb" alt="Bukti transfer" referrerpolicy="no-referrer" @error="$event.target.style.visibility='hidden'">
+        <span class="thumb-cap">🔍 Bukti transfer — klik untuk memperbesar (popup)</span>
+      </button>
       <div class="field mt-md">
         <label class="label">Catatan (wajib bila menolak)</label>
         <textarea class="input" v-model="catatan" placeholder="mis. nominal tidak sesuai / struk buram"></textarea>
@@ -1550,6 +1811,10 @@ window.VIEWS['tagihan'] = {
         </button>
       </template>
     </sa-modal>
+
+    <!-- v7.2: POPUP BUKTI TRANSFER -->
+    <sa-bukti-popup v-if="buktiPop" :id="buktiPop.id" :url="buktiPop.url" :judul="buktiPop.judul" :sub="buktiPop.sub"
+                    @tutup="buktiPop = null"></sa-bukti-popup>
   </div>`
 };
 
